@@ -35,9 +35,9 @@ fy(S) = SA[
     ly = 50.0
 
     # numerics
-    nx   = 500
-    ny   = 500
-    nt   = nx
+    nx   = 1000
+    ny   = 1000
+    nt   = 1.5 * nx
     nvis = 5
 
     # derived numerics
@@ -150,8 +150,8 @@ fy(S) = SA[
 
     hm = heatmap!(
         ax2, xs, ys, γ_obs;
-        colormap   = :viridis,
-        colorrange = (0, 0.20)
+        colormap   = :curl,
+        colorrange = (0.05, 0.15)
     )
 
     Colorbar(fig[2, 2], hm, label = "free surface height")
@@ -160,7 +160,7 @@ fy(S) = SA[
     # Time stepping
     # -------------------------------------------------------------------------
 
-    record(fig, "docs/swe2d_topo.mp4"; fps = 20) do io
+    record(fig, "docs/swe2d_topo_absorbing.mp4"; fps = 20) do io
         for it in 1:nt
             # reconstruction step (piecewise constant)
             @. Sᴸ = S[1:end-1, :]
@@ -189,15 +189,84 @@ fy(S) = SA[
                 S[i, j] = SVector(h, hu, hv)
             end
 
-            # reflective boundary conditions
+            # absorbing / radiation-type boundary conditions
+            # normal wave speed estimate: c = sqrt(g*h)
+            # normal velocity: u = hu/h, v = hv/h
+
+            # left and right boundaries
             for j in 1:ny
-                S[1, j]   = SVector(S[2, j][1],      -S[2, j][2],      S[2, j][3])
-                S[end, j] = SVector(S[end-1, j][1],  -S[end-1, j][2],  S[end-1, j][3])
+                # left boundary
+                hL  = S[1, j][1]
+                huL = S[1, j][2]
+                hvL = S[1, j][3]
+                uL  = huL / hL
+                cL  = (abs(uL) + sqrt(g * hL)) * dt / dx
+
+                S[1, j] = SVector(
+                    S[2, j][1] + ((cL - 1) / (cL + 1)) * (S[2, j][1] - S[1, j][1]),
+                    S[2, j][2] + ((cL - 1) / (cL + 1)) * (S[2, j][2] - S[1, j][2]),
+                    S[2, j][3] + ((cL - 1) / (cL + 1)) * (S[2, j][3] - S[1, j][3])
+                )
+
+                # right boundary
+                hR  = S[end, j][1]
+                huR = S[end, j][2]
+                hvR = S[end, j][3]
+                uR  = huR / hR
+                cR  = (abs(uR) + sqrt(g * hR)) * dt / dx
+
+                S[end, j] = SVector(
+                    S[end-1, j][1] + ((cR - 1) / (cR + 1)) * (S[end-1, j][1] - S[end, j][1]),
+                    S[end-1, j][2] + ((cR - 1) / (cR + 1)) * (S[end-1, j][2] - S[end, j][2]),
+                    S[end-1, j][3] + ((cR - 1) / (cR + 1)) * (S[end-1, j][3] - S[end, j][3])
+                )
             end
 
+            # bottom and top boundaries
             for i in 1:nx
-                S[i, 1]   = SVector(S[i, 2][1],      S[i, 2][2],      -S[i, 2][3])
-                S[i, end] = SVector(S[i, end-1][1],  S[i, end-1][2],  -S[i, end-1][3])
+                # bottom boundary
+                hB  = S[i, 1][1]
+                huB = S[i, 1][2]
+                hvB = S[i, 1][3]
+                vB  = hvB / hB
+                cB  = (abs(vB) + sqrt(g * hB)) * dt / dy
+
+                S[i, 1] = SVector(
+                    S[i, 2][1] + ((cB - 1) / (cB + 1)) * (S[i, 2][1] - S[i, 1][1]),
+                    S[i, 2][2] + ((cB - 1) / (cB + 1)) * (S[i, 2][2] - S[i, 1][2]),
+                    S[i, 2][3] + ((cB - 1) / (cB + 1)) * (S[i, 2][3] - S[i, 1][3])
+                )
+
+                # top boundary
+                hT  = S[i, end][1]
+                huT = S[i, end][2]
+                hvT = S[i, end][3]
+                vT  = hvT / hT
+                cT  = (abs(vT) + sqrt(g * hT)) * dt / dy
+
+                S[i, end] = SVector(
+                    S[i, end-1][1] + ((cT - 1) / (cT + 1)) * (S[i, end-1][1] - S[i, end][1]),
+                    S[i, end-1][2] + ((cT - 1) / (cT + 1)) * (S[i, end-1][2] - S[i, end][2]),
+                    S[i, end-1][3] + ((cT - 1) / (cT + 1)) * (S[i, end-1][3] - S[i, end][3])
+                )
+            end
+
+            # simple sponge layer near boundaries
+            layers = 20
+            σmax = 0.15
+
+            for i in 1:nx, j in 1:ny
+                di = min(i-1, nx-i)
+                dj = min(j-1, ny-j)
+                d  = min(di, dj)
+
+                if d < layers
+                    σ = σmax * (1 - d / layers)^2
+                    h  = S[i,j][1]
+                    hu = S[i,j][2] * (1 - σ)
+                    hv = S[i,j][3] * (1 - σ)
+                    S[i,j] = SVector(h, hu, hv)
+                end
             end
 
             # positivity fix
