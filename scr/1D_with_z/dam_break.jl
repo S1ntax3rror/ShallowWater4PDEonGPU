@@ -192,7 +192,7 @@ f(S) = SA[S[2], S[2]^2 / S[1] + 0.5 * g * S[1]^2]
                     h_obs[]  = getindex.(S,1)
                     hu_obs[] = getindex.(S,2)
                     
-                    h_ex, hu_ex = dam_break_exact(xs, it*dt, hL, hR)
+                    h_ex, hu_ex = dam_break_exact(xs, time, hL, hR)
 
                     h_obs_ex[] = h_ex
                     hu_obs_ex[] = hu_ex
@@ -269,6 +269,7 @@ end
 @views function benchmark_dam_break(;do_viz =false)
     # run the simulation for different grid resolutions and record the errors
     nx_values = [50, 100, 250, 500, 1000, 2000, 4000, 8000, 16000, 32000, 64000]
+
     errors_h = zeros(length(nx_values))
     errors_hu = zeros(length(nx_values))
 
@@ -309,7 +310,6 @@ end
     save("docs/dam_break_error.png", fig)   
     
     show(fig)
-
 
     return nothing
 end
