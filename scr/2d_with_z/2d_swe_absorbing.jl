@@ -35,8 +35,8 @@ fy(S) = SA[
     ly = 50.0
 
     # numerics
-    nx   = 1000
-    ny   = 1000
+    nx   = 250
+    ny   = 250
     nt   = 1.5 * nx
     nvis = 5
 
@@ -160,7 +160,7 @@ fy(S) = SA[
     # Time stepping
     # -------------------------------------------------------------------------
 
-    record(fig, "docs/swe2d_topo_absorbing.mp4"; fps = 20) do io
+    record(fig, "docs/swe2d_topo_absorbing_debug.mp4"; fps = 20) do io
         for it in 1:nt
             # reconstruction step (piecewise constant)
             @. Sᴸ = S[1:end-1, :]

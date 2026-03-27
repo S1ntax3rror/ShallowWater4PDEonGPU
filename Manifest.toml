@@ -2,7 +2,7 @@
 
 julia_version = "1.11.7"
 manifest_format = "2.0"
-project_hash = "d88a0908fcb4e1e7e35f93929b2ce975af51f5cd"
+project_hash = "18da4beab8f4d07cd5cd0b8bd1deea6851c784dd"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -154,6 +154,17 @@ deps = ["Artifacts", "Bzip2_jll", "CompilerSupportLibraries_jll", "Fontconfig_jl
 git-tree-sha1 = "a21c5464519504e41e0cbc91f0188e8ca23d7440"
 uuid = "83423d85-b0ee-5818-9007-b63ccbeb887a"
 version = "1.18.5+1"
+
+[[deps.CellArrays]]
+deps = ["Adapt", "StaticArrays"]
+git-tree-sha1 = "ee581137b9d9b561aa0d988982e365b5b2dadf43"
+uuid = "d35fcfd7-7af4-4c67-b1aa-d78070614af4"
+version = "0.3.3"
+
+    [deps.CellArrays.weakdeps]
+    AMDGPU = "21141c5a-9bdb-4563-92ae-f87d6854732e"
+    CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+    Metal = "dde4c033-4e86-420c-a63e-0dd931031962"
 
 [[deps.ChainRulesCore]]
 deps = ["Compat", "LinearAlgebra"]
@@ -1008,6 +1019,29 @@ deps = ["Artifacts", "Cairo_jll", "Fontconfig_jll", "FreeType2_jll", "FriBidi_jl
 git-tree-sha1 = "0662b083e11420952f2e62e17eddae7fc07d5997"
 uuid = "36c8627f-9965-5494-a995-c6b170f724f3"
 version = "1.57.0+0"
+
+[[deps.ParallelStencil]]
+deps = ["CellArrays", "MacroTools", "Random", "StaticArrays"]
+git-tree-sha1 = "1f116cbc375222ea7c35eae3380ada7f1515a5a4"
+uuid = "94395366-693c-11ea-3b26-d9b7aac5d958"
+version = "0.16.0"
+
+    [deps.ParallelStencil.extensions]
+    ParallelStencil_AMDGPUExt = "AMDGPU"
+    ParallelStencil_CUDAExt = "CUDA"
+    ParallelStencil_EnzymeExt = "Enzyme"
+    ParallelStencil_KernelAbstractionsExt = "KernelAbstractions"
+    ParallelStencil_MetalExt = "Metal"
+    ParallelStencil_OneAPIExt = "oneAPI"
+
+    [deps.ParallelStencil.weakdeps]
+    AMDGPU = "21141c5a-9bdb-4563-92ae-f87d6854732e"
+    CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+    Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
+    KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
+    Metal = "dde4c033-4e86-420c-a63e-0dd931031962"
+    Polyester = "f517fe37-dbe3-4b94-8317-1923a5111588"
+    oneAPI = "8f75cd03-7ff8-4ecb-9b8f-daf728133b1b"
 
 [[deps.Parsers]]
 deps = ["Dates", "PrecompileTools", "UUIDs"]
