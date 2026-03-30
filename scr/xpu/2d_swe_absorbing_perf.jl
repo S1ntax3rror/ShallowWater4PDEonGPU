@@ -195,18 +195,19 @@ const g = 1.0
             max_speed_x  = max.(abs.(hu[1:end-1, :] ./ h[1:end-1, :]) + sqrt.(g .* h[1:end-1, :]), abs.(hu[2:end, :] ./ h[2:end, :]) + sqrt.(g .* h[2:end, :]))
             max_speed_y  = max.(abs.(hv[:, 1:end-1] ./ h[:, 1:end-1]) + sqrt.(g .* h[:, 1:end-1]), abs.(hv[:, 2:end] ./ h[:, 2:end]) + sqrt.(g .* h[:, 2:end]))
 
-            #TODO: we can split compute parallel local maximas and then do a reduction to find the global maximum
-            # -------- TODO --------
-
             # Rusanov fluxes computed component-wise for futher parallelisation using the primative arrays
             @. F₁ = 0.5 * (hu[1:end-1, :] + hu[2:end, :]) - 0.5 * max_speed_x * (h[2:end, :] - h[1:end-1, :])
-            @. F₂ = 0.5 * (hu[1:end-1, :] * hu[1:end-1, :] / h[1:end-1, :] + 0.5 * g * h[1:end-1, :]^2 + hu[2:end, :] * hu[2:end, :] / h[2:end, :] + 0.5 * g * h[2:end, :]^2) - 0.5 * max_speed_x * (hu[2:end, :] - hu[1:end-1, :])
+            @. G₁ = 0.5 * (hv[:, 1:end-1] + hv[:, 2:end]) - 0.5 * max_speed_y * (h[:, 2:end] - h[:, 1:end-1])
+
+            @. F₂ = 0.5 * (hu[1:end-1, :] * hu[1:end-1, :] / h[1:end-1, :] + 0.5 * g * h[1:end-1, :]^2 + hu[2:end, :] * hu[2:end, :] / h[2:end, :] + 0.5 * g * h[2:end, :]^2)
+                    - 0.5 * max_speed_x * (hu[2:end, :] - hu[1:end-1, :])
+            @. G₃ = 0.5 * (hv[:, 1:end-1] * hv[:, 1:end-1] / h[:, 1:end-1] + 0.5 * g * h[:, 1:end-1]^2 + hv[:, 2:end] * hv[:, 2:end] / h[:, 2:end] + 0.5 * g * h[:, 2:end]^2)
+                    - 0.5 * max_speed_y * (hv[:, 2:end] - hv[:, 1:end-1])
+
+
             @. F₃ = 0.5 * (hu[1:end-1, :] * hv[1:end-1, :] / h[1:end-1, :] + hu[2:end, :] * hv[2:end, :] / h[2:end, :]) - 0.5 * max_speed_x * (hv[2:end, :] - hv[1:end-1, :])
-
-            @. G₁ = 0.5 * (hv[:, 1:end-1] + hv[:, 2:end]) - 0.5 .* max_speed_y * (h[:, 2:end] - h[:, 1:end-1])
             @. G₂ = 0.5 * (hu[:, 1:end-1] * hv[:, 1:end-1] / h[:, 1:end-1] + hu[:, 2:end] * hv[:, 2:end] / h[:, 2:end]) - 0.5 * max_speed_y * (hu[:, 2:end] - hu[:, 1:end-1])
-            @. G₃ = 0.5 * (hv[:, 1:end-1] * hv[:, 1:end-1] / h[:, 1:end-1] + 0.5 * g * h[:, 1:end-1]^2 + hv[:, 2:end] * hv[:, 2:end] / h[:, 2:end] + 0.5 * g * h[:, 2:end]^2) - 0.5 * max_speed_y * (hv[:, 2:end] - hv[:, 1:end-1])
-
+            
 
 
             # CFL time step computed from the primative arrays for futher parallelisation
