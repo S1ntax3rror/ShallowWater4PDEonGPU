@@ -69,7 +69,7 @@ end
     return nothing
 end
 
-@parallel_indices (ix, iy) function compute_2nd_and_3th_flux!(F₂, F₃, G₂, G₃, hu, hv, h, g, max_speed_x, max_speed_y)
+@parallel_indices (ix, iy) function compute_f2_g3_flux!(F₂, G₃, hu, hv, h, g, max_speed_x, max_speed_y)
     nx, ny = size(h)
     if (ix <= nx - 1 && iy <= ny)
         F₂[ix, iy] = avx_comp(hu, hu, h, ix, iy) + 0.5 * g * avx_simp(h, ix, iy) - 0.5 * max_speed_x[ix, iy] * dxa(hu, ix, iy)
@@ -77,7 +77,11 @@ end
     if (ix <= nx && iy <= ny - 1)
         G₃[ix, iy] = avy_comp(hv, hv, h, ix, iy) + 0.5 * g * avy_simp(h, ix, iy) - 0.5 * max_speed_y[ix, iy] * dya(hv, ix, iy)
     end
+    return nothing
+end
 
+@parallel_indices (ix, iy) function compute_f3_g2_flux!(F₃, G₂, hu, hv, h, max_speed_x, max_speed_y)
+    nx, ny = size(h)
     if (ix <= nx - 1 && iy <= ny)
         F₃[ix, iy] = avx_comp(hu, hv, h, ix, iy) - 0.5 * max_speed_x[ix, iy] * dxa(hv, ix, iy)
     end
@@ -87,14 +91,16 @@ end
     return nothing
 end
 
-
-
-@parallel_indices (ix, iy) function update_height_momentum!(h, hu, hv, F₁, G₁, F₂, F₃, G₂, G₃, dzdx, dzdy, g, dt, _dx, _dy)
+@parallel_indices (ix, iy) function update_height!(h, F₁, G₁, dt, _dx, _dy)
     nx, ny = size(h)
     if (2 <= ix <= nx-1 && 2 <= iy <= ny-1)
         h[ix, iy] -= dt * (dxb(F₁, ix, iy) * _dx + dyb(G₁, ix, iy) * _dy)
     end
+    return nothing
+end
 
+@parallel_indices (ix, iy) function update_momentum_with_source!(hu, hv, h, F₂, F₃, G₂, G₃, dzdx, dzdy, g, dt, _dx, _dy)
+    nx, ny = size(h)
     if (2 <= ix <= nx-1 && 2 <= iy <= ny-1)
         hu[ix, iy] -= dt * (dxb(F₂, ix, iy) * _dx + dyb(G₂, ix, iy) * _dy + g * h[ix, iy] * dzdx[ix, iy])
         hv[ix, iy] -= dt * (dxb(F₃, ix, iy) * _dx + dyb(G₃, ix, iy) * _dy + g * h[ix, iy] * dzdy[ix, iy])
@@ -102,8 +108,7 @@ end
     return nothing
 end
 
-
-@parallel_indices (iy) function all_bc!(h, hu, hv, g, dt, _dx, _dy)
+@parallel_indices (iy) function sides_bc!(h, hu, hv, g, dt, _dx)
     ny = size(h, 2)
     if iy <= ny
         cL = (abs(hu[1, iy] / h[1, iy]) + sqrt(g * h[1, iy])) * dt * _dx
@@ -128,7 +133,10 @@ end
         hu[end, iy] = huR
         hv[end, iy] = hvR
     end
+    return nothing
+end
 
+@parallel_indices (ix) function top_bottom_bc!(h, hu, hv, g, dt, _dy)
     nx = size(h, 1)
     if ix <= nx
         cB = (abs(hv[ix, 1] / h[ix, 1]) + sqrt(g * h[ix, 1])) * dt * _dy
@@ -186,7 +194,7 @@ function background_bumps(xs, ys; nhills=40, amp_range=(0.01, 0.03),
     X = [x for x in xs, y in ys]
     Y = [y for x in xs, y in ys]
 
-    Z = @zeros(length(xs), length(ys))
+    Z = zeros(length(xs), length(ys))
 
     # Domain limits
     xmin, xmax = minimum(xs), maximum(xs)
@@ -226,7 +234,7 @@ function add_island!(z, xs, ys, isl::Island)
 end
 
 function build_topography(xs, ys; islands=Island[], background=nothing)
-    z = @zeros(length(xs), length(ys))
+    z = zeros(length(xs), length(ys))
 
     for isl in islands
         add_island!(z, xs, ys, isl)
@@ -242,15 +250,15 @@ end
 # Main
 # -----------------------------------------------------------------------------
 
-@views function swe2d_topography_frames(; outdir = "frames", do_viz = false)
+@views function swe2d_topography_frames(nx, ny; outdir = "frames", do_viz = false)
     # physics
     lx = 50.0
     ly = 50.0
 
     # numerics
-    nx   = 800
-    ny   = 800
-    nt   = Int(2 * nx)
+    # nx   = 800
+    # ny   = 800
+    nt   = min(nx,ny)
     nvis = 5
 
     dx = lx / (nx - 1)
@@ -265,21 +273,21 @@ end
     ys = LinRange(-ly / 2, ly / 2, ny)
 
     # state
-    h  = @zeros(nx, ny)
-    hu = @zeros(nx, ny)
-    hv = @zeros(nx, ny)
+    h  = zeros(nx, ny)
+    hu = zeros(nx, ny)
+    hv = zeros(nx, ny)
 
     # fluxes
-    F₁ = @zeros(nx - 1, ny)
-    F₂ = @zeros(nx - 1, ny)
-    F₃ = @zeros(nx - 1, ny)
+    F₁ = zeros(nx - 1, ny)
+    F₂ = zeros(nx - 1, ny)
+    F₃ = zeros(nx - 1, ny)
 
-    G₁ = @zeros(nx, ny - 1)
-    G₂ = @zeros(nx, ny - 1)
-    G₃ = @zeros(nx, ny - 1)
+    G₁ = zeros(nx, ny - 1)
+    G₂ = zeros(nx, ny - 1)
+    G₃ = zeros(nx, ny - 1)
 
-    max_speed_x = @zeros(nx - 1, ny)
-    max_speed_y = @zeros(nx, ny - 1)
+    max_speed_x = zeros(nx - 1, ny)
+    max_speed_y = zeros(nx, ny - 1)
 
     # -------------------------------------------------------------------------
     # topography
@@ -296,8 +304,8 @@ end
 
     z = build_topography(xs, ys; islands=[], background= (xs, ys) -> background_bumps(xs, ys, seed=43))
 
-    dzdx = @zeros(nx, ny)
-    dzdy = @zeros(nx, ny)
+    dzdx = zeros(nx, ny)
+    dzdy = zeros(nx, ny)
 
     dzdx[2:end-1, :] .= (z[3:end, :] .- z[1:end-2, :]) .* _2dx
     dzdx[1, :]       .= dzdx[2, :]
@@ -311,29 +319,26 @@ end
     # sponge layer
     # -------------------------------------------------------------------------
 
-    # backend arrays
-    d = @zeros(nx, ny)
-    σ = @zeros(nx, ny)
+    d = zeros(nx, ny)
+    σ = zeros(nx, ny)
+
+    for i in 1:nx, j in 1:ny
+        di = min(i - 1, nx - i)
+        dj = min(j - 1, ny - j)
+        d[i, j] = min(di, dj)
+    end
 
     layers  = 20
     _layers = 1.0 / layers
     σmax    = 0.15
 
-    # 1D index vectors on the backend
-    ix = Data.Array(reshape(collect(1:nx), nx, 1))   # nx × 1
-    iy = Data.Array(reshape(collect(1:ny), 1, ny))   # 1 × ny
-
-    # distance to nearest boundary in each direction
-    di = min.(ix .- 1, nx .- ix)
-    dj = min.(iy .- 1, ny .- iy)
-
-    # full 2D distance field by broadcasting
-    d .= min.(di, dj)
-
-    # damping profile
-    σ .= ifelse.(d .< layers,
-                σmax .* (1 .- d .* _layers),
-                zero(eltype(σ)))
+    for i in 1:nx, j in 1:ny
+        if d[i, j] < layers
+            σ[i, j] = σmax * (1 - d[i, j] * _layers)
+        else
+            σ[i, j] = 0.0
+        end
+    end
 
     # # -------------------------------------------------------------------------
     # # initial condition
@@ -444,11 +449,14 @@ end
         end
 
         @parallel compute_first_flux!(F₁, G₁, hu, hv, h, max_speed_x, max_speed_y)
-        @parallel compute_2nd_and_3th_flux!(F₂, F₃, G₂, G₃, hu, hv, h, g, max_speed_x, max_speed_y)
+        @parallel compute_f2_g3_flux!(F₂, G₃, hu, hv, h, g, max_speed_x, max_speed_y)
+        @parallel compute_f3_g2_flux!(F₃, G₂, hu, hv, h, max_speed_x, max_speed_y)
 
-        @parallel update_height_momentum!(h, hu, hv, F₁, G₁, F₂, F₃, G₂, G₃, dzdx, dzdy, g, dt, _dx, _dy)
+        @parallel update_height!(h, F₁, G₁, dt, _dx, _dy)
+        @parallel update_momentum_with_source!(hu, hv, h, F₂, F₃, G₂, G₃, dzdx, dzdy, g, dt, _dx, _dy)
 
-        @parallel all_bc!(h, hu, hv, g, dt, _dx, _dy)
+        @parallel sides_bc!(h, hu, hv, g, dt, _dx)
+        @parallel top_bottom_bc!(h, hu, hv, g, dt, _dy)
 
         @parallel sponge_layer!(hu, hv, σ)
         @parallel positivity_fix!(h, hmin)
@@ -467,12 +475,10 @@ end
 
                 save_frame!()
             end
-
+            percent = 100 * it / nt
+            print("\rProgress: $(round(percent, digits=1)) %")
+            flush(stdout)
         end
-
-        percent = 100 * it / nt
-        print("\rProgress: $(round(percent, digits=1)) %")
-        flush(stdout)
     end
 
     max_err = maximum(η0.-(h+z))
@@ -482,7 +488,18 @@ end
     if do_viz
         println("\nSaved $(frame_id[]) frames to: $(abspath(outdir))")
     end
-    return nothing
+    return rel_err
 end
 
-swe2d_topography_frames()
+N = [50, 100, 200, 400, 800, 1600]
+reps = size(N,1)
+errs = zeros(reps)
+
+
+for i in 1:reps
+    error = swe2d_topography_frames(N[i], N[i])
+    errs[i] = error
+    println("Finished Size: ", N[i])
+end
+
+print("The errors: ", errs)
