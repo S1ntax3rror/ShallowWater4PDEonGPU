@@ -63,26 +63,17 @@ end
     return nothing
 end
 
-@parallel function compute_first_flux!(F₁, G₁, hu, hv, h, max_speed_x, max_speed_y)
-    @all(F₁) = @av_xa(hu) - 0.5 * @all(max_speed_x) * @d_xa(h)
-    @all(G₁) = @av_ya(hv) - 0.5 * @all(max_speed_y) * @d_ya(h)
-    return nothing
-end
-
-@parallel_indices (ix, iy) function compute_2nd_and_3th_flux!(F₂, F₃, G₂, G₃, hu, hv, h, g, max_speed_x, max_speed_y)
+@parallel_indices (ix, iy) function compute_1st_2nd_and_3th_flux!(F₁, F₂, F₃, G₁, G₂, G₃, hu, hv, h, g, max_speed_x, max_speed_y)
     nx, ny = size(h)
     if (ix <= nx - 1 && iy <= ny)
+        F₁[ix, iy] = 0.5 * (hu[ix, iy] + hu[ix+1, iy]) - 0.5 * max_speed_x[ix, iy] * dxa(h, ix, iy)
         F₂[ix, iy] = avx_comp(hu, hu, h, ix, iy) + 0.5 * g * avx_simp(h, ix, iy) - 0.5 * max_speed_x[ix, iy] * dxa(hu, ix, iy)
-    end
-    if (ix <= nx && iy <= ny - 1)
-        G₃[ix, iy] = avy_comp(hv, hv, h, ix, iy) + 0.5 * g * avy_simp(h, ix, iy) - 0.5 * max_speed_y[ix, iy] * dya(hv, ix, iy)
-    end
-
-    if (ix <= nx - 1 && iy <= ny)
         F₃[ix, iy] = avx_comp(hu, hv, h, ix, iy) - 0.5 * max_speed_x[ix, iy] * dxa(hv, ix, iy)
     end
     if (ix <= nx && iy <= ny - 1)
+        G₁[ix, iy] = 0.5 * (hv[ix, iy] + hv[ix, iy+1]) - 0.5 * max_speed_y[ix, iy] * dya(h, ix, iy)
         G₂[ix, iy] = avy_comp(hv, hu, h, ix, iy) - 0.5 * max_speed_y[ix, iy] * dya(hu, ix, iy)
+        G₃[ix, iy] = avy_comp(hv, hv, h, ix, iy) + 0.5 * g * avy_simp(h, ix, iy) - 0.5 * max_speed_y[ix, iy] * dya(hv, ix, iy)
     end
     return nothing
 end
@@ -509,8 +500,7 @@ end
             0.99 / (maximum(max_speed_x) * _dx + maximum(max_speed_y) * _dy)
         end
 
-        @parallel compute_first_flux!(F₁, G₁, hu, hv, h, max_speed_x, max_speed_y)
-        @parallel compute_2nd_and_3th_flux!(F₂, F₃, G₂, G₃, hu, hv, h, g, max_speed_x, max_speed_y)
+        @parallel compute_1st_2nd_and_3th_flux!(F₁, F₂, F₃, G₁, G₂, G₃, hu, hv, h, g, max_speed_x, max_speed_y)
 
         @parallel update_height_momentum!(h, hu, hv, F₁, G₁, F₂, F₃, G₂, G₃, dzdx, dzdy, g, dt, _dx, _dy)
 
