@@ -103,9 +103,11 @@ end
 end
 
 
-@parallel_indices (iy) function all_bc!(h, hu, hv, g, dt, _dx, _dy)
-    ny = size(h, 2)
-    if iy <= ny
+@parallel_indices (ix, iy) function all_bc!(h, hu, hv, g, dt, _dx, _dy)
+    nx, ny = size(h)
+
+    # Left boundary (ix=1)
+    if ix == 1 && iy <= ny
         cL = (abs(hu[1, iy] / h[1, iy]) + sqrt(g * h[1, iy])) * dt * _dx
         αL = (cL - 1) / (cL + 1)
 
@@ -129,8 +131,58 @@ end
         hv[end, iy] = hvR
     end
 
-    nx = size(h, 1)
-    if ix <= nx
+    # Right boundary (ix=nx)
+    if ix == nx && iy <= ny
+        cL = (abs(hu[1, iy] / h[1, iy]) + sqrt(g * h[1, iy])) * dt * _dx
+        αL = (cL - 1) / (cL + 1)
+
+        h1  = h[2, iy]  + αL * (h[2, iy]  - h[1, iy])
+        hu1 = hu[2, iy] + αL * (hu[2, iy] - hu[1, iy])
+        hv1 = hv[2, iy] + αL * (hv[2, iy] - hv[1, iy])
+
+        cR = (abs(hu[end, iy] / h[end, iy]) + sqrt(g * h[end, iy])) * dt * _dx
+        αR = (cR - 1) / (cR + 1)
+
+        hR  = h[end-1, iy]  + αR * (h[end-1, iy]  - h[end, iy])
+        huR = hu[end-1, iy] + αR * (hu[end-1, iy] - hu[end, iy])
+        hvR = hv[end-1, iy] + αR * (hv[end-1, iy] - hv[end, iy])
+
+        h[1, iy]    = h1
+        hu[1, iy]   = hu1
+        hv[1, iy]   = hv1
+
+        h[end, iy]  = hR
+        hu[end, iy] = huR
+        hv[end, iy] = hvR
+    end
+
+    # Bottom boundary (iy=1)
+    if iy == 1 && ix <= nx
+        cB = (abs(hv[ix, 1] / h[ix, 1]) + sqrt(g * h[ix, 1])) * dt * _dy
+        αB = (cB - 1) / (cB + 1)
+
+        hB  = h[ix, 2]  + αB * (h[ix, 2]  - h[ix, 1])
+        huB = hu[ix, 2] + αB * (hu[ix, 2] - hu[ix, 1])
+        hvB = hv[ix, 2] + αB * (hv[ix, 2] - hv[ix, 1])
+
+        cT = (abs(hv[ix, end] / h[ix, end]) + sqrt(g * h[ix, end])) * dt * _dy
+        αT = (cT - 1) / (cT + 1)
+
+        hT  = h[ix, end-1]  + αT * (h[ix, end-1]  - h[ix, end])
+        huT = hu[ix, end-1] + αT * (hu[ix, end-1] - hu[ix, end])
+        hvT = hv[ix, end-1] + αT * (hv[ix, end-1] - hv[ix, end])
+
+        h[ix, 1]    = hB
+        hu[ix, 1]   = huB
+        hv[ix, 1]   = hvB
+
+        h[ix, end]  = hT
+        hu[ix, end] = huT
+        hv[ix, end] = hvT
+    end
+
+    # Top boundary (iy=ny)
+    if iy == ny && ix <= nx
         cB = (abs(hv[ix, 1] / h[ix, 1]) + sqrt(g * h[ix, 1])) * dt * _dy
         αB = (cB - 1) / (cB + 1)
 
@@ -165,6 +217,22 @@ end
 @parallel function positivity_fix!(h, hmin)
     @all(h) = max(@all(h), hmin)
     return nothing
+end
+
+function check_bc_preserves_eta(h, z, η0; tol=1e-8)
+    """ Check if BC (eta = h + z) = eta0 """
+    eta = h .+ z
+    nx, ny = size(eta)
+
+    top = eta[:, end]
+    bottom = eta[:, 1]
+    left = eta[1, :]
+    right = eta[end, :]
+
+    bvals = vcat(vec(top), vec(bottom), vec(left), vec(right))
+    maxdev = maximum(abs.(bvals .- η0))
+    @info "BC eta max deviation" maxdev
+    return maxdev <= tol
 end
 
 
@@ -242,7 +310,7 @@ end
 # Main
 # -----------------------------------------------------------------------------
 
-@views function swe2d_topography_frames(; outdir = "frames", do_viz = false)
+@views function swe2d_topography_frames(; outdir = "frames", do_viz = true)
     # physics
     lx = 50.0
     ly = 50.0
@@ -363,8 +431,6 @@ end
 
     # water depth
     h .= max.(hmin, η0 .- z)
-
-    # ------------------------------------------------------------------------
 
     # -------------------------------------------------------------------------
     # visualization
