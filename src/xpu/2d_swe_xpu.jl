@@ -307,11 +307,13 @@ end
     nx_aoi = 400
     ny_aoi = 400
 
-    # Tripple domain size to allow for sponge layer and BCs
-    lx = 3 * lx_aoi
-    ly = 3 * ly_aoi
-    nx = 3 * nx_aoi
-    ny = 3 * ny_aoi
+    # Multiply domain size to allow for sponge layer and BCs
+    domain_expansion_factor = 3
+
+    lx = domain_expansion_factor * lx_aoi
+    ly = domain_expansion_factor * ly_aoi
+    nx = round(Int, domain_expansion_factor * nx_aoi)
+    ny = round(Int, domain_expansion_factor * ny_aoi)
 
     nt   = Int(2 * nx_aoi)
     nvis = 5
@@ -328,8 +330,11 @@ end
     ys = LinRange(-ly / 2, ly / 2, ny)
 
     # ROI indices for visualization
-    ix_roi = (nx_aoi + 1):(2 * nx_aoi)
-    iy_roi = (ny_aoi + 1):(2 * ny_aoi)
+    pad_x = round(Int, (nx - nx_aoi) / 2)
+    pad_y = round(Int, (ny - ny_aoi) / 2)
+
+    ix_roi = (pad_x + 1):(pad_x + nx_aoi)
+    iy_roi = (pad_y + 1):(pad_y + ny_aoi)
 
     xs_roi = xs[ix_roi]
     ys_roi = ys[iy_roi]
