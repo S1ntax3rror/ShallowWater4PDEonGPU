@@ -1,4 +1,14 @@
-using GLMakie
+
+using Serialization
+
+const HAS_MAKIE = try
+    @eval using GLMakie
+    true
+catch
+    @info "GLMakie not found. Falling back to array output."
+    false
+end
+
 using StaticArrays
 using Random
 
@@ -306,7 +316,7 @@ end
 # Main
 # -----------------------------------------------------------------------------
 
-@views function swe2d_topography_frames(; outdir = "frames", do_viz = true)
+@views function swe2d_topography_frames(; outdir = "frames", do_viz = true, force_array_output = false)
     # physics and numerics
     lx_aoi = 50.0 # aoi = area of interest
     ly_aoi = 50.0
@@ -441,6 +451,7 @@ end
     # -------------------------------------------------------------------------
 
     if do_viz
+        use_makie = HAS_MAKIE && !force_array_output
         mkpath(outdir)
 
         vertical_exaggeration = 6.0
@@ -474,58 +485,72 @@ end
             h_slice = h_v[ix_roi_v, iy_roi_v]
             z_slice = z_v[ix_roi_v, iy_roi_v]
 
-            z_plot = vertical_exaggeration .* z_slice
+            if use_makie
 
-            # terrain color as full matrix, not a single Symbol
-            terrain_color = fill(RGBf(0.82, 0.82, 0.82), size(z_plot))
+                z_plot = vertical_exaggeration .* z_slice
 
-            η_water_plot0  = vertical_exaggeration .* (h_slice .+ z_slice)
-            η_water_color0 = h_slice .+ z_slice
+                # terrain color as full matrix, not a single Symbol
+                terrain_color = fill(RGBf(0.82, 0.82, 0.82), size(z_plot))
 
-            η_water_plot0[h_slice .<= hmin_plot]  .= NaN
-            η_water_color0[h_slice .<= hmin_plot] .= NaN
+                η_water_plot0  = vertical_exaggeration .* (h_slice .+ z_slice)
+                η_water_color0 = h_slice .+ z_slice
 
-            η_water_plot  = Observable(η_water_plot0)
-            η_water_color = Observable(η_water_color0)
+                η_water_plot0[h_slice .<= hmin_plot]  .= NaN
+                η_water_color0[h_slice .<= hmin_plot] .= NaN
 
-            fig = Figure(size = (1200, 900))
-            ax = Axis3(
-                fig[1, 1],
-                xlabel = "x",
-                ylabel = "y",
-                zlabel = "height",
-                aspect = (1, 1, 0.25),
-                azimuth = -1.1 - π/2,
-                elevation = 0.45,
-                perspectiveness = 0.35
-            )
+                η_water_plot  = Observable(η_water_plot0)
+                η_water_color = Observable(η_water_color0)
 
-            # gray terrain / islands
-            surface!(ax, xs_roi_v, ys_roi_v, z_plot;
-                color = terrain_color,
-                shading = true
-            )
+                fig = Figure(size = (1200, 900))
+                ax = Axis3(
+                    fig[1, 1],
+                    xlabel = "x",
+                    ylabel = "y",
+                    zlabel = "height",
+                    aspect = (1, 1, 0.25),
+                    azimuth = -1.1 - π/2,
+                    elevation = 0.45,
+                    perspectiveness = 0.35
+                )
 
-            # water only
-            water = surface!(ax, xs_roi_v, ys_roi_v, η_water_plot;
-                color = η_water_color,
-                colormap = :turbo,
-                colorrange = (0.05, 0.15),
-                shading = true
-            )
+                # gray terrain / islands
+                surface!(ax, xs_roi_v, ys_roi_v, z_plot;
+                    color = terrain_color,
+                    shading = true
+                )
 
-            Colorbar(fig[1, 2], water, label = "free surface")
-            display(fig)
+                # water only
+                water = surface!(ax, xs_roi_v, ys_roi_v, η_water_plot;
+                    color = η_water_color,
+                    colormap = :turbo,
+                    colorrange = (0.05, 0.15),
+                    shading = true
+                )
 
-            frame_id = Ref(0)
+                Colorbar(fig[1, 2], water, label = "free surface")
+                display(fig)
 
-            function save_frame!()
-                frame_id[] += 1
-                fname = joinpath(outdir, @sprintf("frame_%06d.png", frame_id[]))
-                save(fname, fig)
+                frame_id = Ref(0)
+
+                function save_frame!()
+                    frame_id[] += 1
+                    fname = joinpath(outdir, @sprintf("frame_%06d.png", frame_id[]))
+                    save(fname, fig)
+                end
+
+                save_frame!()
+            else
+                frame_id = Ref(0)
+                @info "Saving arrays to $outdir"
+                function save_array!()
+                    frame_id[] += 1
+                    # Save as a standard Julia serialized file
+                    fname = joinpath(outdir, @sprintf("array_frame_%06d.jls", frame_id[]))
+                    # Storing a NamedTuple containing the ROI arrays
+                    serialize(fname, (h=convert.(Float32, h_slice), z=convert.(Float32, z_slice)))
+                end
+                save_array!()
             end
-
-            save_frame!()
         end
     end
 
@@ -562,17 +587,21 @@ end
             if me == 0
                 h_slice = h_v[ix_roi_v, iy_roi_v]
                 z_slice = z_v[ix_roi_v, iy_roi_v]
+                
+                if use_makie
+                    ηtmp_plot  = vertical_exaggeration .* (h_slice .+ z_slice)
+                    ηtmp_color = h_slice .+ z_slice
 
-                ηtmp_plot  = vertical_exaggeration .* (h_slice .+ z_slice)
-                ηtmp_color = h_slice .+ z_slice
+                    ηtmp_plot[h_slice .<= hmin_plot]  .= NaN
+                    ηtmp_color[h_slice .<= hmin_plot] .= NaN
 
-                ηtmp_plot[h_slice .<= hmin_plot]  .= NaN
-                ηtmp_color[h_slice .<= hmin_plot] .= NaN
+                    η_water_plot[]  = ηtmp_plot
+                    η_water_color[] = ηtmp_color
 
-                η_water_plot[]  = ηtmp_plot
-                η_water_color[] = ηtmp_color
-
-                save_frame!()
+                    save_frame!()
+                else
+                    save_array!()
+                end
             end
         end
         
@@ -612,4 +641,4 @@ end
     return nothing
 end
 
-swe2d_topography_frames()
+swe2d_topography_frames(do_viz = true, force_array_output = true)
