@@ -210,19 +210,18 @@ end
     return nothing
 end
 
-function check_bc_preserves_eta(h, z, η0; tol=1e-8)
+function check_bc_preserves_eta(h, z, η0, ix_roi, iy_roi; tol=1e-8)
     """ Check if BC (eta = h + z) = eta0 """
-    eta = h .+ z
-    nx, ny = size(eta)
+    eta_roi = h[ix_roi, iy_roi] .+ z[ix_roi, iy_roi]
 
-    top = eta[:, end]
-    bottom = eta[:, 1]
-    left = eta[1, :]
-    right = eta[end, :]
+    top = eta_roi[:, end]
+    bottom = eta_roi[:, 1]
+    left = eta_roi[1, :]
+    right = eta_roi[end, :]
 
     bvals = vcat(vec(top), vec(bottom), vec(left), vec(right))
     maxdev = maximum(abs.(bvals .- η0))
-    @info "BC eta max deviation" maxdev
+    @info "BC eta_roi max deviation" maxdev
     return maxdev <= tol
 end
 
@@ -302,14 +301,19 @@ end
 # -----------------------------------------------------------------------------
 
 @views function swe2d_topography_frames(; outdir = "frames", do_viz = true)
-    # physics
-    lx = 50.0
-    ly = 50.0
+    # physics and numerics
+    lx_aoi = 50.0 # aoi = area of interest
+    ly_aoi = 50.0
+    nx_aoi = 400
+    ny_aoi = 400
 
-    # numerics
-    nx   = 800
-    ny   = 800
-    nt   = Int(2 * nx)
+    # Tripple domain size to allow for sponge layer and BCs
+    lx = 3 * lx_aoi
+    ly = 3 * ly_aoi
+    nx = 3 * nx_aoi
+    ny = 3 * ny_aoi
+
+    nt   = Int(2 * nx_aoi)
     nvis = 5
 
     dx = lx / (nx - 1)
@@ -319,9 +323,16 @@ end
     _dy  = 1.0 / dy
     _2dx = 1.0 / (2 * dx)
     _2dy = 1.0 / (2 * dy)
-
+    
     xs = LinRange(-lx / 2, lx / 2, nx)
     ys = LinRange(-ly / 2, ly / 2, ny)
+
+    # ROI indices for visualization
+    ix_roi = (nx_aoi + 1):(2 * nx_aoi)
+    iy_roi = (ny_aoi + 1):(2 * ny_aoi)
+
+    xs_roi = xs[ix_roi]
+    ys_roi = ys[iy_roi]
 
     # state
     h  = @zeros(nx, ny)
@@ -432,17 +443,20 @@ end
 
         vertical_exaggeration = 6.0
         hmin_plot = 1e-3
-
-        z_plot = vertical_exaggeration .* z
+        
+        z_slice = z[ix_roi, iy_roi]
+        z_plot = vertical_exaggeration .* z_slice
 
         # terrain color as full matrix, not a single Symbol
-        terrain_color = fill(RGBf(0.82, 0.82, 0.82), size(z))
+        terrain_color = fill(RGBf(0.82, 0.82, 0.82), size(z_plot))
 
-        η_water_plot0  = vertical_exaggeration .* (h .+ z)
-        η_water_color0 = h .+ z
+        h_slice = h[ix_roi, iy_roi]
 
-        η_water_plot0[h .<= hmin_plot]  .= NaN
-        η_water_color0[h .<= hmin_plot] .= NaN
+        η_water_plot0  = vertical_exaggeration .* (h_slice .+ z_slice)
+        η_water_color0 = h_slice .+ z_slice
+
+        η_water_plot0[h_slice .<= hmin_plot]  .= NaN
+        η_water_color0[h_slice .<= hmin_plot] .= NaN
 
         η_water_plot  = Observable(η_water_plot0)
         η_water_color = Observable(η_water_color0)
@@ -460,13 +474,13 @@ end
         )
 
         # gray terrain / islands
-        surface!(ax, xs, ys, z_plot;
+        surface!(ax, xs_roi, ys_roi, z_plot;
             color = terrain_color,
             shading = true
         )
 
         # water only
-        water = surface!(ax, xs, ys, η_water_plot;
+        water = surface!(ax, xs_roi, ys_roi, η_water_plot;
             color = η_water_color,
             colormap = :turbo,
             colorrange = (0.05, 0.15),
@@ -510,13 +524,15 @@ end
         @parallel positivity_fix!(h, hmin)
 
         if it % nvis == 0
-
             if do_viz
-                ηtmp_plot  = vertical_exaggeration .* (h .+ z)
-                ηtmp_color = h .+ z
+                h_slice = h[ix_roi, iy_roi]
+                z_slice = z[ix_roi, iy_roi]
 
-                ηtmp_plot[h .<= hmin_plot]  .= NaN
-                ηtmp_color[h .<= hmin_plot] .= NaN
+                ηtmp_plot  = vertical_exaggeration .* (h_slice .+ z_slice)
+                ηtmp_color = h_slice .+ z_slice
+
+                ηtmp_plot[h_slice .<= hmin_plot]  .= NaN
+                ηtmp_color[h_slice .<= hmin_plot] .= NaN
 
                 η_water_plot[]  = ηtmp_plot
                 η_water_color[] = ηtmp_color
@@ -530,6 +546,22 @@ end
         print("\rProgress: $(round(percent, digits=1)) %")
         flush(stdout)
     end
+
+    # -------------------------------------------------------------------------
+    # Validation
+    # -------------------------------------------------------------------------
+
+    # Check the boundaries of the ROI
+    is_preserved = check_bc_preserves_eta(h, z, η0, ix_roi, iy_roi)
+    
+    # Total error inside the ROI 
+    h_roi = h[ix_roi, iy_roi]
+    z_roi = z[ix_roi, iy_roi]
+    max_err_roi = maximum(abs.(η0 .- (h_roi .+ z_roi)))
+    
+    println("\nValidation Results:")
+    println("ROI boundaries preserved within tolerance? ", is_preserved)
+    println("Maximum error across entire ROI: ", max_err_roi)
 
     max_err = maximum(η0.-(h+z))
     rel_err = max_err/η0
