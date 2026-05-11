@@ -296,6 +296,64 @@ function build_topography(xs, ys; islands=Island[], background=nothing)
 
     return z
 end
+
+function load_topography_data(domain_expansion_factor)
+    base_file = "data/tsunamiOku/D112-94-50m.txt"
+    wave_file = "data/tsunamiOku/I112-94-50m-17a.txt"
+
+    nx_aoi, ny_aoi = 112, 94 # ENSURE THIS MATCHES THE DATA FILES AND THE AOI DIMENSIONS
+
+    # Read as string, split by whitespace, and parse to Float64
+    read_values(filename) = parse.(Float64, split(read(filename, String)))
+
+    z_vec = read_values(base_file)
+    η0_vec = read_values(wave_file)
+
+    if length(z_vec) != nx_aoi * ny_aoi || length(η0_vec) != nx_aoi * ny_aoi
+        error("Data files do not match expected dimensions.")
+    end
+
+    # Reshape to 2D arrays
+    z_inner = reshape(z_vec, nx_aoi, ny_aoi)
+    η0_inner = reshape(η0_vec, nx_aoi, ny_aoi)
+
+    # Calculate expanded dimensions 
+    nx = round(Int, domain_expansion_factor * nx_aoi)
+    ny = round(Int, domain_expansion_factor * ny_aoi)
+
+    pad_x = round(Int, (nx - nx_aoi) / 2)
+    pad_y = round(Int, (ny - ny_aoi) / 2)
+
+    z_expanded = zeros(nx, ny)
+    η0_expanded = zeros(nx, ny)
+
+    # Pad the arrays
+    for i in 1:nx
+        for j in 1:ny
+            # Clamp to the closest valid index of the inner grid
+            orig_i = clamp(i - pad_x, 1, nx_aoi)
+            orig_j = clamp(j - pad_y, 1, ny_aoi)
+            
+            # Stretch the edge bathymetry outwards
+            z_expanded[i, j] = z_inner[orig_i, orig_j]
+            
+            # Check if the current cell is inside the ROI
+            in_roi = (1 <= i - pad_x <= nx_aoi) && (1 <= j - pad_y <= ny_aoi)
+            
+            # If in ROI, load the wave. If in padding, use resting sea level (0.0)
+            η0_expanded[i, j] = in_roi ? η0_inner[i - pad_x, j - pad_y] : 0.0
+        end
+    end
+
+    # Cast to ParallelStencil arrays
+    z = Data.Array(z_expanded)
+    η0 = Data.Array(η0_expanded)
+
+    return z, η0
+end
+
+
+
 # -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
@@ -304,8 +362,8 @@ end
     # physics and numerics
     lx_aoi = 50.0 # aoi = area of interest
     ly_aoi = 50.0
-    nx_aoi = 150
-    ny_aoi = 150
+    nx_aoi = 112
+    ny_aoi = 94
 
     # Multiply domain size to allow for sponge layer and BCs
     domain_expansion_factor = 3
@@ -399,19 +457,22 @@ end
     ω  = sqrt(2 * g * h0) / a # Angular frequency
 
     # Gaussian Spike Parameters
-    A_spike = 0.3   # Amplitude of the drop/spike
-    x_c     = 3.0    # X center of the spike
-    y_c     = 3.0    # Y center of the spike
-    σ_spike = 1.5    # Width of the spike (standard deviation)
+    # A_spike = 0.3   # Amplitude of the drop/spike
+    # x_c     = 3.0    # X center of the spike
+    # y_c     = 3.0    # Y center of the spike
+    # σ_spike = 1.5    # Width of the spike (standard deviation)
 
-    # Parabolic Topography
-    z = [h0 * ((x^2 + y^2) / a^2) for x in xs, y in ys]
+    # # Parabolic Topography
+    # z = [h0 * ((x^2 + y^2) / a^2) for x in xs, y in ys]
 
-    # Tilted Planar Free Surface + Gaussian Spike
-    η0 = [h0 - h0 * ((x^2 + y^2) / a^2) + B * x + 
-          A_spike * exp(-((x - x_c)^2 + (y - y_c)^2) / (2 * σ_spike^2)) 
-          for x in xs, y in ys]
+    # # Tilted Planar Free Surface + Gaussian Spike
+    # η0 = [h0 - h0 * ((x^2 + y^2) / a^2) + B * x + 
+    #       A_spike * exp(-((x - x_c)^2 + (y - y_c)^2) / (2 * σ_spike^2)) 
+    #       for x in xs, y in ys]
     
+
+    z, η0 = load_topography_data(domain_expansion_factor)
+
     hmin  = 1e-6
     h .= max.(hmin, η0 .- z)
 
