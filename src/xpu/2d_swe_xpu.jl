@@ -304,8 +304,8 @@ end
     # physics and numerics
     lx_aoi = 50.0 # aoi = area of interest
     ly_aoi = 50.0
-    nx_aoi = 400
-    ny_aoi = 400
+    nx_aoi = 150
+    ny_aoi = 150
 
     # Multiply domain size to allow for sponge layer and BCs
     domain_expansion_factor = 3
@@ -369,7 +369,51 @@ end
     # ]
 
 
-    z = build_topography(xs, ys; islands=[], background= (xs, ys) -> background_bumps(xs, ys, seed=43))
+    # z = build_topography(xs, ys; islands=[], background= (xs, ys) -> background_bumps(xs, ys, seed=43))
+
+    # # -------------------------------------------------------------------------
+    # # Thacker's Bowl
+    # # -------------------------------------------------------------------------
+    # h0 = 0.1    # Water depth at center
+    # a  = 10.0   # Distance to zero elevation
+    # B  = 0.05   # Amplitude of the slosh
+    # ω  = sqrt(2 * g * h0) / a # Angular frequency
+
+    # # Parabolic Topography
+    # z = [h0 * ((x^2 + y^2) / a^2) for x in xs, y in ys]
+
+    # # Tilted Planar Free Surface (Initial State at t=0)
+    # η0 = [h0 - h0 * ((x^2 + y^2) / a^2) + B * x for x in xs, y in ys]
+    
+    # # h will naturally go to 0 at the edges of the bowl
+    # hmin  = 1e-6
+    # h .= max.(hmin, η0 .- z)
+
+
+    # -------------------------------------------------------------------------
+    # Thacker's Bowl with Gaussian Spike
+    # -------------------------------------------------------------------------
+    h0 = 0.1    # Water depth at center
+    a  = 10.0   # Distance to zero elevation
+    B  = 0.05   # Amplitude of the slosh
+    ω  = sqrt(2 * g * h0) / a # Angular frequency
+
+    # Gaussian Spike Parameters
+    A_spike = 0.3   # Amplitude of the drop/spike
+    x_c     = 3.0    # X center of the spike
+    y_c     = 3.0    # Y center of the spike
+    σ_spike = 1.5    # Width of the spike (standard deviation)
+
+    # Parabolic Topography
+    z = [h0 * ((x^2 + y^2) / a^2) for x in xs, y in ys]
+
+    # Tilted Planar Free Surface + Gaussian Spike
+    η0 = [h0 - h0 * ((x^2 + y^2) / a^2) + B * x + 
+          A_spike * exp(-((x - x_c)^2 + (y - y_c)^2) / (2 * σ_spike^2)) 
+          for x in xs, y in ys]
+    
+    hmin  = 1e-6
+    h .= max.(hmin, η0 .- z)
 
     dzdx = @zeros(nx, ny)
     dzdy = @zeros(nx, ny)
@@ -426,18 +470,19 @@ end
     # initial condition
     # -------------------------------------------------------------------------
 
-    h_out = 0.10          # background free-surface level
-    a     = 0.08          # wave amplitude
-    y0    = 20.0          # crest location
-    σy    = 3.0           # wave width
-    hmin  = 1e-6
+    # h_out = 0.10          # background free-surface level
+    # a     = 0.08          # wave amplitude
+    # y0    = 20.0          # crest location
+    # σy    = 3.0           # wave width
+    # hmin  = 1e-6
 
-    # free surface eta(x,y) = eta(y), homogeneous in x
-    # η0 = [h_out + a * exp(-((y - y0)^2) / (2 * σy^2)) for x in xs, y in ys]
-    η0 = h_out
+    # # free surface eta(x,y) = eta(y), homogeneous in x
+    # # η0 = [h_out + a * exp(-((y - y0)^2) / (2 * σy^2)) for x in xs, y in ys]
+    # η0 = h_out
 
-    # water depth
-    h .= max.(hmin, η0 .- z)
+    # # water depth
+    # h .= max.(hmin, η0 .- z)
+    
 
     # -------------------------------------------------------------------------
     # visualization
@@ -557,20 +602,26 @@ end
     # -------------------------------------------------------------------------
 
     # Check the boundaries of the ROI
-    is_preserved = check_bc_preserves_eta(h, z, η0, ix_roi, iy_roi)
+    # is_preserved = check_bc_preserves_eta(h, z, η0, ix_roi, iy_roi)
     
     # Total error inside the ROI 
-    h_roi = h[ix_roi, iy_roi]
-    z_roi = z[ix_roi, iy_roi]
-    max_err_roi = maximum(abs.(η0 .- (h_roi .+ z_roi)))
+    # h_roi = h[ix_roi, iy_roi]
+    # z_roi = z[ix_roi, iy_roi]
+    # max_err_roi = maximum(abs.(η0 .- (h_roi .+ z_roi)))
     
-    println("\nValidation Results:")
-    println("ROI boundaries preserved within tolerance? ", is_preserved)
-    println("Maximum error across entire ROI: ", max_err_roi)
+    # println("\nValidation Results:")
+    # println("ROI boundaries preserved within tolerance? ", is_preserved)
+    # println("Maximum error across entire ROI: ", max_err_roi)
+    
+    # max_err = maximum(η0.-(h+z))
+    # rel_err = max_err/η0
+    # print("relative error: ", rel_err)
 
-    max_err = maximum(η0.-(h+z))
-    rel_err = max_err/η0
-    print("relative error: ", rel_err)
+    # Calculate global errors
+    max_err = maximum(abs.(η0 .- (h .+ z)))
+    max_η0_val = η0 isa AbstractArray ? maximum(abs.(η0)) : abs(η0)
+    rel_err = max_err / max_η0_val
+    println("relative error: ", rel_err)
 
     if do_viz
         println("\nSaved $(frame_id[]) frames to: $(abspath(outdir))")
