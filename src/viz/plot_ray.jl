@@ -1,280 +1,521 @@
-#!/usr/bin/env julia
-
 using Serialization
-using Printf
-using FileIO
-using Colors
-using RPRMakie
-using RadeonProRender
-using GeometryBasics: Vec3f
+using GLMakie
 
-const RPR = RadeonProRender
+GLMakie.activate!()
 
-# ------------------------------------------------------------
-# Activate backend
-# ------------------------------------------------------------
-RPRMakie.activate!(
-    iterations = 64,
-    plugin = RPR.Tahoe,
-    resource = RPR.RPR_CREATION_FLAGS_ENABLE_CPU,
-)
+# =======================================================
+# 1. PATHS AND FILE INPUT
+# =======================================================
 
-# ------------------------------------------------------------
-# Paths
-# ------------------------------------------------------------
 script_dir = @__DIR__
-frames_dir = normpath(joinpath(script_dir, "..", "..", "frames"))
-plot_dir   = normpath(joinpath(script_dir, "..", "..", "docs", "multi_xpu_ray"))
-mkpath(plot_dir)
 
-@info "Reading frames from $frames_dir"
-@info "Saving plots to $plot_dir"
+const FRAME_DIR = normpath(joinpath(script_dir, "..", "..", "frames"))
+const OUT_DIR   = normpath(joinpath(script_dir, "..", "..", "docs", "multi_xpu_ray"))
 
-frame_files = sort(filter(f -> endswith(f, ".jls"), readdir(frames_dir)))
-isempty(frame_files) && error("No .jls files found in $frames_dir")
+mkpath(OUT_DIR)
+
+# Matches:
+# array_frame_000001.jls
+# array_frame_000002.jls
+# ...
+const FRAME_REGEX = r"array_frame_\d+\.jls$"
 
 
-# ------------------------------------------------------------
-# Test peak on free surface (first frame only)
-# ------------------------------------------------------------
-add_test_peak = true
-peak_amp      = 0.03f0     # amplitude in h-units
-peak_sigma    = 2.5f0      # width in x/y units
-peak_x0       = 0.0f0      # center x-position
-peak_y0       = 0.0f0      # center y-position
+# =======================================================
+# 2. GENERAL RENDERING KNOBS
+# =======================================================
 
-# ------------------------------------------------------------
-# Grid / domain
-# ------------------------------------------------------------
-lx_aoi = 50.0
-ly_aoi = 50.0
-nx_aoi = 99
-ny_aoi = 99
+# Render every kth grid cell:
+# 1 = full resolution
+# 2 = faster, half resolution
+# 4 = much faster, coarser
+const STRIDE = 2
 
-xs = LinRange(-lx_aoi / 2, lx_aoi / 2, nx_aoi)
-ys = LinRange(-ly_aoi / 2, ly_aoi / 2, ny_aoi)
+# Vertical visual scale:
+# Increase if the water/terrain appears too flat.
+# This scales both terrain and water in the rendered scene.
+const HEIGHT_SCALE = 0.2f0
 
-# ------------------------------------------------------------
-# Rendering knobs
-# ------------------------------------------------------------
-vertical_exaggeration = 25.0       # stronger terrain relief
-hmin_plot             = 0.01f0     # hide very shallow water
-water_offset          = 0.08f0     # lift water slightly above terrain
 
-# camera in spherical-style parameters
-camera_distance   = 95.0f0
-camera_azimuth_deg   = 235.0f0     # rotate around z-axis
-camera_elevation_deg = 28.0f0      # angle above xy-plane
-camera_lookat        = Vec3f(0, 0, 2)
-camera_fov_deg       = 20.0f0
+# =======================================================
+# 3. CAMERA KNOBS
+# =======================================================
 
-# lighting
-env_intensity    = 0.35            # lower than before -> less washed out
-sun_radiance     = 14000f0
-sun_position     = Vec3f(-60, -70, 65)
-sun_radius       = 120.0f0
+const CAMERA_AZIMUTH = 0.70f0 * π
+const CAMERA_ELEVATION = 0.11f0 * π
+const CAMERA_PERSPECTIVE = 1.0f0
 
-# ------------------------------------------------------------
-# Helper: camera from azimuth/elevation
-# ------------------------------------------------------------
-function set_camera_azimuth_elevation!(scene;
-    distance::Float32,
-    azimuth_deg::Float32,
-    elevation_deg::Float32,
-    lookat::Vec3f,
-    fov_deg::Float32
+# Visual vertical compression of the 3D plot.
+# Smaller third value = flatter scene.
+const AXIS_ASPECT = (1, 1, 0.20)
+
+# Background sky color
+const SKY_COLOR = RGBf(0.78, 0.88, 1.0)
+
+
+# =======================================================
+# 4. TERRAIN COLOR KNOBS
+# =======================================================
+
+# Terrain colors from low elevation to high elevation.
+# Higher terrain becomes brighter.
+const TERRAIN_LOW  = RGBf(0.40, 0.27, 0.15)
+const TERRAIN_MID1 = RGBf(0.64, 0.44, 0.24)
+const TERRAIN_MID2 = RGBf(0.82, 0.64, 0.38)
+const TERRAIN_HIGH = RGBf(1.00, 0.90, 0.72)
+
+
+# =======================================================
+# 5. WATER TRANSPARENCY AND HIGHLIGHT KNOBS
+# =======================================================
+
+# Water opacity:
+# shallow water = more transparent
+# deep water    = more opaque
+const WATER_ALPHA_SHALLOW = 0.12f0
+const WATER_ALPHA_DEEP    = 0.42f0
+
+# Subtle slope-based highlight.
+# Increase if you want the water surface to shimmer more.
+const WATER_HIGHLIGHT_GAIN = 0.12f0
+const WATER_HIGHLIGHT_MAX  = 0.05f0
+
+
+# =======================================================
+# 6. THESIS-INSPIRED OPTICAL KNOBS
+# =======================================================
+
+# Air-water refractive indices for Schlick Fresnel approximation
+const REFRACTIVE_INDEX_AIR   = 1.0f0
+const REFRACTIVE_INDEX_WATER = 1.333f0
+
+# Beer–Lambert absorption coefficients.
+# Larger red absorption makes deeper water visually shift toward blue/green.
+const WATER_ABSORB_R = 0.17435f0
+const WATER_ABSORB_G = 0.03046f0
+const WATER_ABSORB_B = 0.05129f0
+
+# Strength of depth absorption.
+# Increase if deep water is not dark/blue enough.
+# Decrease if bottom terrain disappears too quickly.
+const WATER_DEPTH_ABSORB_SCALE = 12.0f0
+
+# Reflected sky colors
+const SKY_HORIZON = RGBf(0.82, 0.90, 1.00)
+const SKY_ZENITH  = RGBf(0.45, 0.66, 0.95)
+
+# Fake specular sun highlight
+const SUN_DIRECTION = (0.35f0, 0.25f0, 0.90f0)
+const SUN_GLINT_STRENGTH = 0.08f0
+const SUN_GLINT_SHININESS = 100f0
+
+# Approximate viewing direction for Fresnel reflection.
+# Tune this only if the reflected look becomes visually strange.
+const VIEW_DIRECTION = (0.10f0, -0.92f0, 0.38f0)
+
+
+# =======================================================
+# 7. WATER DEPTH COLOR KNOBS
+# =======================================================
+
+# Depth-dependent water tint:
+# shallow -> cyan
+# medium  -> turquoise
+# deep    -> dark blue
+const WATER_TINT_SHALLOW = RGBf(0.26, 0.76, 0.82)
+const WATER_TINT_MID     = RGBf(0.08, 0.72, 0.74)
+const WATER_TINT_DEEP    = RGBf(0.02, 0.10, 0.34)
+
+# How strongly water tint replaces the terrain color.
+# Final interpolation weight:
+# WATER_TINT_BASE_WEIGHT + WATER_TINT_DEPTH_WEIGHT * normalized_depth
+const WATER_TINT_BASE_WEIGHT  = 0.30f0
+const WATER_TINT_DEPTH_WEIGHT = 0.55f0
+
+
+# =======================================================
+# 8. DATA INTERPRETATION
+# =======================================================
+
+# h = water column height
+# z = bathymetry / ground elevation
+#
+# Therefore:
+# terrain surface = z
+# water surface   = z + h
+
+water_surface(h, z) = Float32.(h .+ z) .* HEIGHT_SCALE
+bathymetry_surface(z) = Float32.(z) .* HEIGHT_SCALE
+
+
+# =======================================================
+# 9. FILE HANDLING
+# =======================================================
+
+function sorted_frame_paths(dir::AbstractString)
+    files = filter(readdir(dir; join=true)) do f
+        occursin(FRAME_REGEX, basename(f))
+    end
+
+    return sort(files)
+end
+
+function read_frame(path::AbstractString)
+    data = deserialize(path)
+
+    h = data.h
+    z = data.z
+
+    return h, z
+end
+
+
+# =======================================================
+# 10. ARRAY HELPERS
+# =======================================================
+
+function downsample(A::AbstractMatrix, stride::Int)
+    return A[1:stride:end, 1:stride:end]
+end
+
+function grid_xy(A::AbstractMatrix)
+    nx, ny = size(A)
+
+    x = range(0f0, 1f0, length=nx)
+    y = range(0f0, 1f0, length=ny)
+
+    return x, y
+end
+
+
+# =======================================================
+# 11. COLOR AND VECTOR HELPERS
+# =======================================================
+
+lerp(a, b, t) = (1 - t) * a + t * b
+
+function lerp_rgb(c1::RGBf, c2::RGBf, t)
+    RGBf(
+        lerp(c1.r, c2.r, t),
+        lerp(c1.g, c2.g, t),
+        lerp(c1.b, c2.b, t),
+    )
+end
+
+function dot3(a, b)
+    return a[1] * b[1] + a[2] * b[2] + a[3] * b[3]
+end
+
+function norm3(a)
+    return sqrt(dot3(a, a))
+end
+
+function normalize3(a)
+    n = max(norm3(a), eps(Float32))
+    return (a[1] / n, a[2] / n, a[3] / n)
+end
+
+function add_rgb(c::RGBf, x::Float32)
+    return RGBf(
+        clamp(c.r + x, 0f0, 1f0),
+        clamp(c.g + x, 0f0, 1f0),
+        clamp(c.b + x, 0f0, 1f0),
+    )
+end
+
+function mul_rgb(c1::RGBf, c2::RGBf)
+    return RGBf(
+        clamp(c1.r * c2.r, 0f0, 1f0),
+        clamp(c1.g * c2.g, 0f0, 1f0),
+        clamp(c1.b * c2.b, 0f0, 1f0),
+    )
+end
+
+
+# =======================================================
+# 12. TERRAIN COLORING
+# =======================================================
+
+function make_terrain_colors(bed::AbstractMatrix{<:Real})
+    lo, hi = extrema(bed)
+    rng = max(hi - lo, eps(Float32))
+
+    C = Matrix{RGBAf}(undef, size(bed)...)
+
+    for I in eachindex(bed)
+        t = clamp((Float32(bed[I]) - lo) / rng, 0f0, 1f0)
+
+        rgb =
+            t < 0.35f0 ? lerp_rgb(TERRAIN_LOW, TERRAIN_MID1, t / 0.35f0) :
+            t < 0.70f0 ? lerp_rgb(TERRAIN_MID1, TERRAIN_MID2, (t - 0.35f0) / 0.35f0) :
+                         lerp_rgb(TERRAIN_MID2, TERRAIN_HIGH, (t - 0.70f0) / 0.30f0)
+
+        C[I] = RGBAf(rgb.r, rgb.g, rgb.b, 1.0f0)
+    end
+
+    return C
+end
+
+
+# =======================================================
+# 13. WATER GEOMETRY HELPERS
+# =======================================================
+
+function slope_magnitude(A::AbstractMatrix{<:Real})
+    nx, ny = size(A)
+    S = zeros(Float32, nx, ny)
+
+    for i in 2:nx-1, j in 2:ny-1
+        dx = 0.5f0 * (A[i+1, j] - A[i-1, j])
+        dy = 0.5f0 * (A[i, j+1] - A[i, j-1])
+        S[i, j] = sqrt(Float32(dx^2 + dy^2))
+    end
+
+    S[1, :]   .= S[2, :]
+    S[end, :] .= S[end-1, :]
+    S[:, 1]   .= S[:, 2]
+    S[:, end] .= S[:, end-1]
+
+    return S
+end
+
+function surface_normals(A::AbstractMatrix{<:Real})
+    nx, ny = size(A)
+    N = Matrix{NTuple{3, Float32}}(undef, nx, ny)
+
+    dx_grid = 1f0 / max(nx - 1, 1)
+    dy_grid = 1f0 / max(ny - 1, 1)
+
+    for i in 1:nx, j in 1:ny
+        im = max(i - 1, 1)
+        ip = min(i + 1, nx)
+        jm = max(j - 1, 1)
+        jp = min(j + 1, ny)
+
+        dzdx = Float32(A[ip, j] - A[im, j]) / Float32((ip - im) * dx_grid)
+        dzdy = Float32(A[i, jp] - A[i, jm]) / Float32((jp - jm) * dy_grid)
+
+        N[i, j] = normalize3((-dzdx, -dzdy, 1f0))
+    end
+
+    return N
+end
+
+
+# =======================================================
+# 14. THESIS-INSPIRED WATER OPTICS
+# =======================================================
+
+function schlick_fresnel(
+    cosθ::Float32;
+    n1::Float32=REFRACTIVE_INDEX_AIR,
+    n2::Float32=REFRACTIVE_INDEX_WATER,
 )
-    az = deg2rad(azimuth_deg)
-    el = deg2rad(elevation_deg)
+    r0 = ((n1 - n2) / (n1 + n2))^2
+    return clamp(r0 + (1f0 - r0) * (1f0 - cosθ)^5, 0f0, 1f0)
+end
 
-    eye = Vec3f(
-        lookat[1] + distance * cos(el) * cos(az),
-        lookat[2] + distance * cos(el) * sin(az),
-        lookat[3] + distance * sin(el)
+function beer_lambert_transmittance(depth::Float32)
+    d = max(depth * WATER_DEPTH_ABSORB_SCALE, 0f0)
+
+    return RGBf(
+        exp(-WATER_ABSORB_R * d),
+        exp(-WATER_ABSORB_G * d),
+        exp(-WATER_ABSORB_B * d),
+    )
+end
+
+function make_water_colors(
+    water::AbstractMatrix{<:Real},
+    bed::AbstractMatrix{<:Real},
+    terrain_colors::AbstractMatrix{RGBAf},
+)
+    depth = max.(Float32.(water .- bed), 0f0)
+    slope = slope_magnitude(Float32.(water))
+    normals = surface_normals(Float32.(water))
+
+    dlo, dhi = extrema(depth)
+    drng = max(dhi - dlo, eps(Float32))
+    smax = max(maximum(slope), eps(Float32))
+
+    view_dir = normalize3(VIEW_DIRECTION)
+    sun_dir = normalize3(SUN_DIRECTION)
+
+    half_vec = normalize3((
+        view_dir[1] + sun_dir[1],
+        view_dir[2] + sun_dir[2],
+        view_dir[3] + sun_dir[3],
+    ))
+
+    C = Matrix{RGBAf}(undef, size(water)...)
+
+    for I in eachindex(water)
+        d = depth[I]
+        td = clamp((d - dlo) / drng, 0f0, 1f0)
+        n = normals[I]
+
+        # -------------------------------------------------------
+        # 1. Terrain visible through water
+        # -------------------------------------------------------
+
+        terrain_rgba = terrain_colors[I]
+        terrain_rgb = RGBf(
+            terrain_rgba.r,
+            terrain_rgba.g,
+            terrain_rgba.b,
+        )
+
+        transmittance = beer_lambert_transmittance(d)
+        bottom_seen = mul_rgb(terrain_rgb, transmittance)
+
+        # -------------------------------------------------------
+        # 2. Depth-based water tint
+        # -------------------------------------------------------
+
+        water_tint =
+            td < 0.45f0 ?
+                lerp_rgb(WATER_TINT_SHALLOW, WATER_TINT_MID, td / 0.45f0) :
+                lerp_rgb(WATER_TINT_MID, WATER_TINT_DEEP, (td - 0.45f0) / 0.55f0)
+
+        tint_weight = WATER_TINT_BASE_WEIGHT + WATER_TINT_DEPTH_WEIGHT * td
+
+        refracted_col = lerp_rgb(
+            bottom_seen,
+            water_tint,
+            tint_weight,
+        )
+
+        # -------------------------------------------------------
+        # 3. Fresnel-style reflected sky
+        # -------------------------------------------------------
+
+        cosθ = clamp(abs(dot3(n, view_dir)), 0f0, 1f0)
+        fresnel = schlick_fresnel(cosθ)
+
+        # Slightly amplified for visible Makie output
+        fresnel_visual = clamp(
+            0.025f0 + 1.9f0 * fresnel,
+            0f0,
+            0.32f0,
+        )
+
+        sky_mix = clamp(n[3], 0f0, 1f0)
+        reflected_sky = lerp_rgb(SKY_HORIZON, SKY_ZENITH, sky_mix)
+
+        # -------------------------------------------------------
+        # 4. Small specular sun highlight
+        # -------------------------------------------------------
+
+        sun_amount = clamp(dot3(n, half_vec), 0f0, 1f0)^SUN_GLINT_SHININESS
+        sun_glint = SUN_GLINT_STRENGTH * sun_amount
+
+        slope_factor = clamp(slope[I] / smax, 0f0, 1f0)
+        slope_highlight = clamp(
+            WATER_HIGHLIGHT_GAIN * slope_factor,
+            0f0,
+            WATER_HIGHLIGHT_MAX,
+        )
+
+        # -------------------------------------------------------
+        # 5. Final water color
+        # -------------------------------------------------------
+
+        rgb = lerp_rgb(refracted_col, reflected_sky, fresnel_visual)
+        rgb = add_rgb(rgb, Float32(sun_glint + slope_highlight))
+
+        alpha = lerp(WATER_ALPHA_SHALLOW, WATER_ALPHA_DEEP, td)
+
+        C[I] = RGBAf(rgb.r, rgb.g, rgb.b, alpha)
+    end
+
+    return C
+end
+
+
+# =======================================================
+# 15. SCENE CONSTRUCTION
+# =======================================================
+
+function make_scene(h_raw, z_raw; title="SWE water surface")
+    h = downsample(Float32.(h_raw), STRIDE)
+    z = downsample(Float32.(z_raw), STRIDE)
+
+    bed = bathymetry_surface(z)
+    water = water_surface(h, z)
+
+    x, y = grid_xy(water)
+
+    terrain_colors = make_terrain_colors(bed)
+    water_colors   = make_water_colors(water, bed, terrain_colors)
+
+    fig = Figure(
+        size=(1400, 900),
+        fontsize=18,
+        backgroundcolor=SKY_COLOR,
     )
 
-    cam = cameracontrols(scene)
-    cam.eyeposition[] = eye
-    cam.lookat[]      = lookat
-    cam.upvector[]    = Vec3f(0, 0, 1)
-    cam.fov[]         = fov_deg
-    update_cam!(scene, cam)
-    return nothing
-end
-
-function normalize01(A)
-    amin, amax = extrema(A)
-    if isapprox(amin, amax)
-        return fill(0.5f0, size(A))
-    end
-    return Float32.((A .- amin) ./ (amax - amin))
-end
-
-function terrain_rgb_from_height(z_plot)
-    zn = normalize01(z_plot)
-
-    return map(zn) do v
-        if v < 0.35f0
-            # low terrain: dark green/brown
-            t = v / 0.35f0
-            RGBf(
-                0.22f0 + 0.18f0 * t,
-                0.30f0 + 0.20f0 * t,
-                0.18f0 + 0.10f0 * t
-            )
-        elseif v < 0.70f0
-            # mid terrain: brown/sand
-            t = (v - 0.35f0) / 0.35f0
-            RGBf(
-                0.40f0 + 0.32f0 * t,
-                0.50f0 + 0.20f0 * t,
-                0.28f0 + 0.18f0 * t
-            )
-        else
-            # high terrain: light rock
-            t = (v - 0.70f0) / 0.30f0
-            RGBf(
-                0.72f0 + 0.18f0 * t,
-                0.70f0 + 0.18f0 * t,
-                0.62f0 + 0.22f0 * t
-            )
-        end
-    end
-end
-
-function water_rgb_from_depth(h, hmin_plot)
-    valid = h[h .> hmin_plot]
-
-    if isempty(valid)
-        return fill(RGBf(0.10f0, 0.25f0, 0.38f0), size(h))
-    end
-
-    hmin, hmax = extrema(valid)
-    hn = if isapprox(hmin, hmax)
-        fill(0.5f0, size(h))
-    else
-        Float32.((h .- hmin) ./ (hmax - hmin))
-    end
-
-    return map(hn) do v
-        v = clamp(v, 0f0, 1f0)
-
-        # darker blue for deeper water, softer cyan for shallow
-        RGBf(
-            0.08f0 + 0.22f0 * v,
-            0.22f0 + 0.35f0 * v,
-            0.35f0 + 0.45f0 * v
-        )
-    end
-end
-
-function gaussian_peak(xs, ys, x0, y0, amp, sigma)
-    X = reshape(Float32.(collect(xs)), :, 1)
-    Y = reshape(Float32.(collect(ys)), 1, :)
-    return amp .* exp.(-((X .- x0).^2 .+ (Y .- y0).^2) ./ (2f0 * sigma^2))
-end
-
-# ------------------------------------------------------------
-# Loop over frames
-# ------------------------------------------------------------
-for (i, file) in enumerate(frame_files)
-
-    frame_path = joinpath(frames_dir, file)
-    data = deserialize(frame_path)
-
-    h = Float32.(data.h)
-    z = Float32.(data.z)
-
-    h_vis = copy(h)
-
-    if add_test_peak && i == 1
-        peak = gaussian_peak(xs, ys, peak_x0, peak_y0, peak_amp, peak_sigma)
-        h_vis .+= peak
-        @info "Added test peak to first frame" maximum_peak=maximum(peak)
-    end
-
-    @info "Plotting $file" frame=i size_h=size(h) size_z=size(z)
-
-    # --------------------------------------------------------
-    # Build terrain and water geometry
-    # --------------------------------------------------------
-    z_plot = vertical_exaggeration .* z
-
-    η_water_plot = vertical_exaggeration .* (h_vis .+ z) .+ water_offset
-    η_water_plot[h_vis .<= hmin_plot] .= NaN32
-
-    # depth for coloring the water
-    h_plot = copy(h_vis)
-    h_plot[h .<= hmin_plot] .= NaN32
-
-    terrain_color = terrain_rgb_from_height(z_plot)
-    water_color = water_rgb_from_depth(h_vis, hmin_plot)
-
-    # --------------------------------------------------------
-    # Lights
-    # --------------------------------------------------------
-    lights = [
-        EnvironmentLight(env_intensity, load(RPR.assetpath("studio026.exr"))),
-        PointLight(
-            RGBf(sun_radiance, sun_radiance, sun_radiance * 0.95f0),
-            sun_position,
-            sun_radius
-        )
-    ]
-
-    # --------------------------------------------------------
-    # Figure / scene
-    # --------------------------------------------------------
-    fig = Figure(size = (1400, 950))
-
-    ax = LScene(
-        fig[1, 1];
-        show_axis = false,
-        scenekw = (; lights = lights)
+    ax = Axis3(
+        fig[1, 1],
+        title=title,
+        xlabel="x",
+        ylabel="y",
+        zlabel="height",
+        azimuth=CAMERA_AZIMUTH,
+        elevation=CAMERA_ELEVATION,
+        perspectiveness=CAMERA_PERSPECTIVE,
+        aspect=AXIS_ASPECT,
+        backgroundcolor=SKY_COLOR,
     )
 
-    # --------------------------------------------------------
-    # Terrain
-    # --------------------------------------------------------
+    hidedecorations!(ax)
+    hidespines!(ax)
+
+    # Ground / bathymetry
     surface!(
         ax,
-        xs, ys, z_plot;
-        color = terrain_color,
-        shading = true,
-        diffuse = Vec3f(0.70),
-        specular = 0.03,
+        x, y, bed;
+        color=terrain_colors,
+        shading=true,
     )
-    # --------------------------------------------------------
+
     # Water surface
-    # --------------------------------------------------------
-    # This is the TOP water layer.
-    # We make it darker, less diffuse, more specular.
     surface!(
         ax,
-        xs, ys, η_water_plot;
-        color = water_color,
-        shading = true,
-        diffuse = Vec3f(0.03),
-        specular = 2.8,
+        x, y, water;
+        color=water_colors,
+        transparency=true,
+        shading=true,
     )
 
-    # --------------------------------------------------------
-    # Camera
-    # --------------------------------------------------------
-    set_camera_azimuth_elevation!(
-        ax.scene;
-        distance = camera_distance,
-        azimuth_deg = camera_azimuth_deg,
-        elevation_deg = camera_elevation_deg,
-        lookat = camera_lookat,
-        fov_deg = camera_fov_deg
-    )
-
-    # --------------------------------------------------------
-    # Save
-    # --------------------------------------------------------
-    outname = joinpath(plot_dir, @sprintf("h_frame_%06d.png", i))
-    save(outname, ax.scene)
+    return fig
 end
 
-@info "Done plotting $(length(frame_files)) frames."
+
+# =======================================================
+# 16. RENDER ALL FRAMES
+# =======================================================
+
+function render_frames()
+    paths = sorted_frame_paths(FRAME_DIR)
+
+    if isempty(paths)
+        error("No frames found in $(FRAME_DIR) matching $(FRAME_REGEX)")
+    end
+
+    @info "Found $(length(paths)) frames"
+
+    for (i, path) in enumerate(paths)
+        h, z = read_frame(path)
+
+        @info "Plotting $(basename(path))" frame=i size_h=size(h) size_z=size(z)
+
+        fig = make_scene(h, z; title="SWE frame $(i)")
+
+        outpath = joinpath(OUT_DIR, "swe_water_$(lpad(i, 5, '0')).png")
+        save(outpath, fig)
+
+        @info "Saved $outpath"
+    end
+end
+
+render_frames()
