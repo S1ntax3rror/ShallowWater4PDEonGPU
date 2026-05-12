@@ -297,11 +297,11 @@ function build_topography(xs, ys; islands=Island[], background=nothing)
     return z
 end
 
-function load_topography_data(domain_expansion_factor)
+function load_topography_data(domain_expansion_factor, nx_aoi_ext, ny_aoi_ext)
     base_file = "data/tsunamiOku/D112-94-50m.txt"
     wave_file = "data/tsunamiOku/I112-94-50m-17a.txt"
 
-    nx_aoi, ny_aoi = 112, 94 # ENSURE THIS MATCHES THE DATA FILES AND THE AOI DIMENSIONS
+    nx_aoi, ny_aoi = 112, 94 # ENSURE THIS MATCHES THE DATA FILES
 
     # Read as string, split by whitespace, and parse to Float64
     read_values(filename) = parse.(Float64, split(read(filename, String)))
@@ -314,15 +314,47 @@ function load_topography_data(domain_expansion_factor)
     end
 
     # Reshape to 2D arrays
-    z_inner = reshape(z_vec, nx_aoi, ny_aoi)
-    η0_inner = reshape(η0_vec, nx_aoi, ny_aoi)
+    z_inner_orig = reshape(z_vec, nx_aoi, ny_aoi)
+    η0_inner_orig = reshape(η0_vec, nx_aoi, ny_aoi)
+
+    z_inner = zeros(nx_aoi_ext, ny_aoi_ext)
+    η0_inner = zeros(nx_aoi_ext, ny_aoi_ext)
+    
+    # Bilinear interpolation to expand the inner grid to the extended grid
+    for i in 1:nx_aoi_ext
+        for j in 1:ny_aoi_ext
+            # Map the new output index continuously to the original input grid
+            x = 1 + (i - 1) * (nx_aoi - 1) / (nx_aoi_ext - 1)
+            y = 1 + (j - 1) * (ny_aoi - 1) / (ny_aoi_ext - 1)
+            
+            # Get integer bounds for interpolation
+            x1, y1 = floor(Int, x), floor(Int, y)
+            x2, y2 = min(x1 + 1, nx_aoi), min(y1 + 1, ny_aoi)
+            
+            # Calculate weights
+            wx = x - x1
+            wy = y - y1
+            
+            # Interpolate z
+            z_inner[i, j] = (1 - wx) * (1 - wy) * z_inner_orig[x1, y1] + 
+                                 wx  * (1 - wy) * z_inner_orig[x2, y1] + 
+                            (1 - wx) * wy  * z_inner_orig[x1, y2] + 
+                                 wx  * wy  * z_inner_orig[x2, y2]
+                            
+            # Interpolate η0
+            η0_inner[i, j] = (1 - wx) * (1 - wy) * η0_inner_orig[x1, y1] + 
+                                  wx  * (1 - wy) * η0_inner_orig[x2, y1] + 
+                             (1 - wx) * wy  * η0_inner_orig[x1, y2] + 
+                                  wx  * wy  * η0_inner_orig[x2, y2]
+        end
+    end
 
     # Calculate expanded dimensions 
-    nx = round(Int, domain_expansion_factor * nx_aoi)
-    ny = round(Int, domain_expansion_factor * ny_aoi)
+    nx = round(Int, domain_expansion_factor * nx_aoi_ext)
+    ny = round(Int, domain_expansion_factor * ny_aoi_ext)
 
-    pad_x = round(Int, (nx - nx_aoi) / 2)
-    pad_y = round(Int, (ny - ny_aoi) / 2)
+    pad_x = round(Int, (nx - nx_aoi_ext) / 2)
+    pad_y = round(Int, (ny - ny_aoi_ext) / 2)
 
     z_expanded = zeros(nx, ny)
     η0_expanded = zeros(nx, ny)
@@ -331,14 +363,14 @@ function load_topography_data(domain_expansion_factor)
     for i in 1:nx
         for j in 1:ny
             # Clamp to the closest valid index of the inner grid
-            orig_i = clamp(i - pad_x, 1, nx_aoi)
-            orig_j = clamp(j - pad_y, 1, ny_aoi)
+            orig_i = clamp(i - pad_x, 1, nx_aoi_ext)
+            orig_j = clamp(j - pad_y, 1, ny_aoi_ext)
             
             # Stretch the edge bathymetry outwards
             z_expanded[i, j] = z_inner[orig_i, orig_j]
             
             # Check if the current cell is inside the ROI
-            in_roi = (1 <= i - pad_x <= nx_aoi) && (1 <= j - pad_y <= ny_aoi)
+            in_roi = (1 <= i - pad_x <= nx_aoi_ext) && (1 <= j - pad_y <= ny_aoi_ext)
             
             # If in ROI, load the wave. If in padding, use resting sea level (0.0)
             η0_expanded[i, j] = in_roi ? η0_inner[i - pad_x, j - pad_y] : 0.0
@@ -362,8 +394,8 @@ end
     # physics and numerics
     lx_aoi = 50.0 # aoi = area of interest
     ly_aoi = 50.0
-    nx_aoi = 112
-    ny_aoi = 94
+    nx_aoi = 250
+    ny_aoi = 250
 
     # Multiply domain size to allow for sponge layer and BCs
     domain_expansion_factor = 3
@@ -373,7 +405,7 @@ end
     nx = round(Int, domain_expansion_factor * nx_aoi)
     ny = round(Int, domain_expansion_factor * ny_aoi)
 
-    nt   = Int(2 * nx_aoi)
+    nt   = Int(5 * nx_aoi)
     nvis = 5
 
     dx = lx / (nx - 1)
@@ -471,7 +503,7 @@ end
     #       for x in xs, y in ys]
     
 
-    z, η0 = load_topography_data(domain_expansion_factor)
+    z, η0 = load_topography_data(domain_expansion_factor, nx_aoi, ny_aoi)
 
     hmin  = 1e-6
     h .= max.(hmin, η0 .- z)
