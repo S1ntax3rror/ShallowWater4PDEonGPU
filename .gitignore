@@ -1,6 +1,9 @@
 Manifest.toml
 frames/
 .vscode/
+<<<<<<< HEAD
+=======
 docs/multi_xpu/
 docs/multi_xpu_ray/
 cache/
+>>>>>>> 84cb909ca5be829fbe7c7039b2ea2c078716104f

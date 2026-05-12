@@ -296,6 +296,96 @@ function build_topography(xs, ys; islands=Island[], background=nothing)
 
     return z
 end
+
+function load_topography_data(domain_expansion_factor, nx_aoi_ext, ny_aoi_ext)
+    base_file = "data/tsunamiOku/D112-94-50m.txt"
+    wave_file = "data/tsunamiOku/I112-94-50m-17a.txt"
+
+    nx_aoi, ny_aoi = 112, 94 # ENSURE THIS MATCHES THE DATA FILES
+
+    # Read as string, split by whitespace, and parse to Float64
+    read_values(filename) = parse.(Float64, split(read(filename, String)))
+
+    z_vec = read_values(base_file)
+    η0_vec = read_values(wave_file)
+
+    if length(z_vec) != nx_aoi * ny_aoi || length(η0_vec) != nx_aoi * ny_aoi
+        error("Data files do not match expected dimensions.")
+    end
+
+    # Reshape to 2D arrays
+    z_inner_orig = reshape(z_vec, nx_aoi, ny_aoi)
+    η0_inner_orig = reshape(η0_vec, nx_aoi, ny_aoi)
+
+    z_inner = zeros(nx_aoi_ext, ny_aoi_ext)
+    η0_inner = zeros(nx_aoi_ext, ny_aoi_ext)
+    
+    # Bilinear interpolation to expand the inner grid to the extended grid
+    for i in 1:nx_aoi_ext
+        for j in 1:ny_aoi_ext
+            # Map the new output index continuously to the original input grid
+            x = 1 + (i - 1) * (nx_aoi - 1) / (nx_aoi_ext - 1)
+            y = 1 + (j - 1) * (ny_aoi - 1) / (ny_aoi_ext - 1)
+            
+            # Get integer bounds for interpolation
+            x1, y1 = floor(Int, x), floor(Int, y)
+            x2, y2 = min(x1 + 1, nx_aoi), min(y1 + 1, ny_aoi)
+            
+            # Calculate weights
+            wx = x - x1
+            wy = y - y1
+            
+            # Interpolate z
+            z_inner[i, j] = (1 - wx) * (1 - wy) * z_inner_orig[x1, y1] + 
+                                 wx  * (1 - wy) * z_inner_orig[x2, y1] + 
+                            (1 - wx) * wy  * z_inner_orig[x1, y2] + 
+                                 wx  * wy  * z_inner_orig[x2, y2]
+                            
+            # Interpolate η0
+            η0_inner[i, j] = (1 - wx) * (1 - wy) * η0_inner_orig[x1, y1] + 
+                                  wx  * (1 - wy) * η0_inner_orig[x2, y1] + 
+                             (1 - wx) * wy  * η0_inner_orig[x1, y2] + 
+                                  wx  * wy  * η0_inner_orig[x2, y2]
+        end
+    end
+
+    # Calculate expanded dimensions 
+    nx = round(Int, domain_expansion_factor * nx_aoi_ext)
+    ny = round(Int, domain_expansion_factor * ny_aoi_ext)
+
+    pad_x = round(Int, (nx - nx_aoi_ext) / 2)
+    pad_y = round(Int, (ny - ny_aoi_ext) / 2)
+
+    z_expanded = zeros(nx, ny)
+    η0_expanded = zeros(nx, ny)
+
+    # Pad the arrays
+    for i in 1:nx
+        for j in 1:ny
+            # Clamp to the closest valid index of the inner grid
+            orig_i = clamp(i - pad_x, 1, nx_aoi_ext)
+            orig_j = clamp(j - pad_y, 1, ny_aoi_ext)
+            
+            # Stretch the edge bathymetry outwards
+            z_expanded[i, j] = z_inner[orig_i, orig_j]
+            
+            # Check if the current cell is inside the ROI
+            in_roi = (1 <= i - pad_x <= nx_aoi_ext) && (1 <= j - pad_y <= ny_aoi_ext)
+            
+            # If in ROI, load the wave. If in padding, use resting sea level (0.0)
+            η0_expanded[i, j] = in_roi ? η0_inner[i - pad_x, j - pad_y] : 0.0
+        end
+    end
+
+    # Cast to ParallelStencil arrays
+    z = Data.Array(z_expanded)
+    η0 = Data.Array(η0_expanded)
+
+    return z, η0
+end
+
+
+
 # -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
@@ -304,8 +394,8 @@ end
     # physics and numerics
     lx_aoi = 50.0 # aoi = area of interest
     ly_aoi = 50.0
-    nx_aoi = 400
-    ny_aoi = 400
+    nx_aoi = 250
+    ny_aoi = 250
 
     # Multiply domain size to allow for sponge layer and BCs
     domain_expansion_factor = 3
@@ -315,7 +405,7 @@ end
     nx = round(Int, domain_expansion_factor * nx_aoi)
     ny = round(Int, domain_expansion_factor * ny_aoi)
 
-    nt   = Int(2 * nx_aoi)
+    nt   = Int(5 * nx_aoi)
     nvis = 5
 
     dx = lx / (nx - 1)
@@ -369,7 +459,54 @@ end
     # ]
 
 
-    z = build_topography(xs, ys; islands=[], background= (xs, ys) -> background_bumps(xs, ys, seed=43))
+    # z = build_topography(xs, ys; islands=[], background= (xs, ys) -> background_bumps(xs, ys, seed=43))
+
+    # # -------------------------------------------------------------------------
+    # # Thacker's Bowl
+    # # -------------------------------------------------------------------------
+    # h0 = 0.1    # Water depth at center
+    # a  = 10.0   # Distance to zero elevation
+    # B  = 0.05   # Amplitude of the slosh
+    # ω  = sqrt(2 * g * h0) / a # Angular frequency
+
+    # # Parabolic Topography
+    # z = [h0 * ((x^2 + y^2) / a^2) for x in xs, y in ys]
+
+    # # Tilted Planar Free Surface (Initial State at t=0)
+    # η0 = [h0 - h0 * ((x^2 + y^2) / a^2) + B * x for x in xs, y in ys]
+    
+    # # h will naturally go to 0 at the edges of the bowl
+    # hmin  = 1e-6
+    # h .= max.(hmin, η0 .- z)
+
+
+    # -------------------------------------------------------------------------
+    # Thacker's Bowl with Gaussian Spike
+    # -------------------------------------------------------------------------
+    h0 = 0.1    # Water depth at center
+    a  = 10.0   # Distance to zero elevation
+    B  = 0.05   # Amplitude of the slosh
+    ω  = sqrt(2 * g * h0) / a # Angular frequency
+
+    # Gaussian Spike Parameters
+    # A_spike = 0.3   # Amplitude of the drop/spike
+    # x_c     = 3.0    # X center of the spike
+    # y_c     = 3.0    # Y center of the spike
+    # σ_spike = 1.5    # Width of the spike (standard deviation)
+
+    # # Parabolic Topography
+    # z = [h0 * ((x^2 + y^2) / a^2) for x in xs, y in ys]
+
+    # # Tilted Planar Free Surface + Gaussian Spike
+    # η0 = [h0 - h0 * ((x^2 + y^2) / a^2) + B * x + 
+    #       A_spike * exp(-((x - x_c)^2 + (y - y_c)^2) / (2 * σ_spike^2)) 
+    #       for x in xs, y in ys]
+    
+
+    z, η0 = load_topography_data(domain_expansion_factor, nx_aoi, ny_aoi)
+
+    hmin  = 1e-6
+    h .= max.(hmin, η0 .- z)
 
     dzdx = @zeros(nx, ny)
     dzdy = @zeros(nx, ny)
@@ -426,18 +563,19 @@ end
     # initial condition
     # -------------------------------------------------------------------------
 
-    h_out = 0.10          # background free-surface level
-    a     = 0.08          # wave amplitude
-    y0    = 20.0          # crest location
-    σy    = 3.0           # wave width
-    hmin  = 1e-6
+    # h_out = 0.10          # background free-surface level
+    # a     = 0.08          # wave amplitude
+    # y0    = 20.0          # crest location
+    # σy    = 3.0           # wave width
+    # hmin  = 1e-6
 
-    # free surface eta(x,y) = eta(y), homogeneous in x
-    # η0 = [h_out + a * exp(-((y - y0)^2) / (2 * σy^2)) for x in xs, y in ys]
-    η0 = h_out
+    # # free surface eta(x,y) = eta(y), homogeneous in x
+    # # η0 = [h_out + a * exp(-((y - y0)^2) / (2 * σy^2)) for x in xs, y in ys]
+    # η0 = h_out
 
-    # water depth
-    h .= max.(hmin, η0 .- z)
+    # # water depth
+    # h .= max.(hmin, η0 .- z)
+    
 
     # -------------------------------------------------------------------------
     # visualization
@@ -557,20 +695,26 @@ end
     # -------------------------------------------------------------------------
 
     # Check the boundaries of the ROI
-    is_preserved = check_bc_preserves_eta(h, z, η0, ix_roi, iy_roi)
+    # is_preserved = check_bc_preserves_eta(h, z, η0, ix_roi, iy_roi)
     
     # Total error inside the ROI 
-    h_roi = h[ix_roi, iy_roi]
-    z_roi = z[ix_roi, iy_roi]
-    max_err_roi = maximum(abs.(η0 .- (h_roi .+ z_roi)))
+    # h_roi = h[ix_roi, iy_roi]
+    # z_roi = z[ix_roi, iy_roi]
+    # max_err_roi = maximum(abs.(η0 .- (h_roi .+ z_roi)))
     
-    println("\nValidation Results:")
-    println("ROI boundaries preserved within tolerance? ", is_preserved)
-    println("Maximum error across entire ROI: ", max_err_roi)
+    # println("\nValidation Results:")
+    # println("ROI boundaries preserved within tolerance? ", is_preserved)
+    # println("Maximum error across entire ROI: ", max_err_roi)
+    
+    # max_err = maximum(η0.-(h+z))
+    # rel_err = max_err/η0
+    # print("relative error: ", rel_err)
 
-    max_err = maximum(η0.-(h+z))
-    rel_err = max_err/η0
-    print("relative error: ", rel_err)
+    # Calculate global errors
+    max_err = maximum(abs.(η0 .- (h .+ z)))
+    max_η0_val = η0 isa AbstractArray ? maximum(abs.(η0)) : abs(η0)
+    rel_err = max_err / max_η0_val
+    println("relative error: ", rel_err)
 
     if do_viz
         println("\nSaved $(frame_id[]) frames to: $(abspath(outdir))")
