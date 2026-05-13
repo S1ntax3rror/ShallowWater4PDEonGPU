@@ -1,4 +1,13 @@
-using GLMakie
+using Serialization
+
+const HAS_MAKIE = try
+    @eval using GLMakie
+    true
+catch
+    @info "GLMakie not found. Falling back to array output."
+    false
+end
+
 using StaticArrays
 using Random
 
@@ -28,18 +37,10 @@ using Printf
 
 const g = 1.0
 
-@views function dt_multithread(max_speed_x, max_speed_y, _dx, _dy, n)
-    nthreads = Threads.nthreads()
-    max_speeds_x = zeros(nthreads)
-    max_speeds_y = zeros(nthreads)
-
-    Threads.@threads for i in 1:n
-        tid = Threads.threadid()
-        max_speeds_x[tid] = max(max_speeds_x[tid], maximum(max_speed_x[:, i]))
-        max_speeds_y[tid] = max(max_speeds_y[tid], maximum(max_speed_y[i, :]))
-    end
-
-    return 0.99 / (maximum(max_speeds_x) * _dx + maximum(max_speeds_y) * _dy)
+@views function dt_multithread(max_speed_x, max_speed_y, _dx, _dy)
+    max_x = maximum(max_speed_x)
+    max_y = maximum(max_speed_y)
+    return 0.99 / (max_x * _dx + max_y * _dy)
 end
 
 # -----------------------------------------------------------------------------
@@ -83,12 +84,9 @@ end
 @parallel_indices (ix, iy) function update_height_momentum!(h, hu, hv, F₁, G₁, F₂, F₃, G₂, G₃, dzdx, dzdy, g, dt, _dx, _dy)
     nx, ny = size(h)
     if (2 <= ix <= nx-1 && 2 <= iy <= ny-1)
-        h[ix, iy] -= dt * (dxb(F₁, ix, iy) * _dx + dyb(G₁, ix, iy) * _dy)
-    end
-
-    if (2 <= ix <= nx-1 && 2 <= iy <= ny-1)
         hu[ix, iy] -= dt * (dxb(F₂, ix, iy) * _dx + dyb(G₂, ix, iy) * _dy + g * h[ix, iy] * dzdx[ix, iy])
         hv[ix, iy] -= dt * (dxb(F₃, ix, iy) * _dx + dyb(G₃, ix, iy) * _dy + g * h[ix, iy] * dzdy[ix, iy])
+        h[ix, iy] -= dt * (dxb(F₁, ix, iy) * _dx + dyb(G₁, ix, iy) * _dy)
     end
     return nothing
 end
@@ -390,12 +388,15 @@ end
 # Main
 # -----------------------------------------------------------------------------
 
-@views function swe2d_topography_frames(; outdir = "frames", do_viz = true)
+@views function swe2d_topography_frames(; outdir = "frames", do_viz = true, force_array_output=false)
     # physics and numerics
     lx_aoi = 50.0 # aoi = area of interest
     ly_aoi = 50.0
     nx_aoi = 250
     ny_aoi = 250
+
+    desired_output_resolution_x = 500 # Desired output resolution in x direction (number of points)
+    desired_output_resolution_y = 500 # Desired output resolution in y direction (number of points) 
 
     # Multiply domain size to allow for sponge layer and BCs
     domain_expansion_factor = 3
@@ -582,66 +583,81 @@ end
     # -------------------------------------------------------------------------
 
     if do_viz
+        use_makie = HAS_MAKIE && !force_array_output
+        print("Using visualization: ", use_makie ? "Makie" : "Array output")
         mkpath(outdir)
 
-        vertical_exaggeration = 6.0
-        hmin_plot = 1e-3
-        
         z_slice = z[ix_roi, iy_roi]
-        z_plot = vertical_exaggeration .* z_slice
-
-        # terrain color as full matrix, not a single Symbol
-        terrain_color = fill(RGBf(0.82, 0.82, 0.82), size(z_plot))
-
         h_slice = h[ix_roi, iy_roi]
 
-        η_water_plot0  = vertical_exaggeration .* (h_slice .+ z_slice)
-        η_water_color0 = h_slice .+ z_slice
+        if use_makie
+            vertical_exaggeration = 6.0
+            hmin_plot = 1e-3
+            
+            z_plot = vertical_exaggeration .* z_slice
 
-        η_water_plot0[h_slice .<= hmin_plot]  .= NaN
-        η_water_color0[h_slice .<= hmin_plot] .= NaN
+            # terrain color as full matrix, not a single Symbol
+            terrain_color = fill(RGBf(0.82, 0.82, 0.82), size(z_plot))
 
-        η_water_plot  = Observable(η_water_plot0)
-        η_water_color = Observable(η_water_color0)
+            η_water_plot0  = vertical_exaggeration .* (h_slice .+ z_slice)
+            η_water_color0 = h_slice .+ z_slice
 
-        fig = Figure(size = (1200, 900))
-        ax = Axis3(
-            fig[1, 1],
-            xlabel = "x",
-            ylabel = "y",
-            zlabel = "height",
-            aspect = (1, 1, 0.25),
-            azimuth = -1.1 - π/2,
-            elevation = 0.45,
-            perspectiveness = 0.35
-        )
+            η_water_plot0[h_slice .<= hmin_plot]  .= NaN
+            η_water_color0[h_slice .<= hmin_plot] .= NaN
 
-        # gray terrain / islands
-        surface!(ax, xs_roi, ys_roi, z_plot;
-            color = terrain_color,
-            shading = true
-        )
+            η_water_plot  = Observable(η_water_plot0)
+            η_water_color = Observable(η_water_color0)
 
-        # water only
-        water = surface!(ax, xs_roi, ys_roi, η_water_plot;
-            color = η_water_color,
-            colormap = :turbo,
-            colorrange = (0.05, 0.15),
-            shading = true
-        )
+            fig = Figure(size = (1200, 900))
+            ax = Axis3(
+                fig[1, 1],
+                xlabel = "x",
+                ylabel = "y",
+                zlabel = "height",
+                aspect = (1, 1, 0.25),
+                azimuth = -1.1 - π/2,
+                elevation = 0.45,
+                perspectiveness = 0.35
+            )
 
-        Colorbar(fig[1, 2], water, label = "free surface")
-        display(fig)
+            # gray terrain / islands
+            surface!(ax, xs_roi, ys_roi, z_plot;
+                color = terrain_color,
+                shading = true
+            )
 
-        frame_id = Ref(0)
+            # water only
+            water = surface!(ax, xs_roi, ys_roi, η_water_plot;
+                color = η_water_color,
+                colormap = :turbo,
+                colorrange = (0.05, 0.15),
+                shading = true
+            )
 
-        function save_frame!()
-            frame_id[] += 1
-            fname = joinpath(outdir, @sprintf("frame_%06d.png", frame_id[]))
-            save(fname, fig)
+            Colorbar(fig[1, 2], water, label = "free surface")
+            display(fig)
+
+            frame_id = Ref(0)
+
+            function save_frame!()
+                frame_id[] += 1
+                fname = joinpath(outdir, @sprintf("frame_%06d.png", frame_id[]))
+                save(fname, fig)
+            end
+            save_frame!()
+
+        else
+            frame_id = Ref(0)
+            @info "Saving arrays to $outdir"
+            function save_array!()
+                frame_id[] += 1
+                # Save as a standard Julia serialized file
+                fname = joinpath(outdir, @sprintf("array_frame_%06d.jls", frame_id[]))
+                # Storing a NamedTuple containing the ROI arrays
+                serialize(fname, (h=convert.(Float32, h_slice), z=convert.(Float32, z_slice)))
+            end
+            save_array!()
         end
-
-        save_frame!()
     end
 
     # -------------------------------------------------------------------------
@@ -652,7 +668,7 @@ end
         @parallel compute_maxspeed!(max_speed_x, max_speed_y, h, hu, hv, g)
 
         dt = if !USE_GPU
-            dt_multithread(max_speed_x, max_speed_y, _dx, _dy, ny)
+            dt_multithread(max_speed_x, max_speed_y, _dx, _dy)
         else
             0.99 / (maximum(max_speed_x) * _dx + maximum(max_speed_y) * _dy)
         end
@@ -671,16 +687,20 @@ end
                 h_slice = h[ix_roi, iy_roi]
                 z_slice = z[ix_roi, iy_roi]
 
-                ηtmp_plot  = vertical_exaggeration .* (h_slice .+ z_slice)
-                ηtmp_color = h_slice .+ z_slice
+                if use_makie
+                    ηtmp_plot  = vertical_exaggeration .* (h_slice .+ z_slice)
+                    ηtmp_color = h_slice .+ z_slice
 
-                ηtmp_plot[h_slice .<= hmin_plot]  .= NaN
-                ηtmp_color[h_slice .<= hmin_plot] .= NaN
+                    ηtmp_plot[h_slice .<= hmin_plot]  .= NaN
+                    ηtmp_color[h_slice .<= hmin_plot] .= NaN
 
-                η_water_plot[]  = ηtmp_plot
-                η_water_color[] = ηtmp_color
+                    η_water_plot[]  = ηtmp_plot
+                    η_water_color[] = ηtmp_color
 
-                save_frame!()
+                    save_frame!()
+                else
+                    save_array!()
+                end
             end
 
         end
