@@ -392,8 +392,8 @@ end
     # physics and numerics
     lx_aoi = 50.0 # aoi = area of interest
     ly_aoi = 50.0
-    nx_aoi = 250
-    ny_aoi = 250
+    nx_aoi = 125
+    ny_aoi = 125
 
     desired_output_resolution_x = 500 # Desired output resolution in x direction (number of points)
     desired_output_resolution_y = 500 # Desired output resolution in y direction (number of points) 
@@ -406,7 +406,7 @@ end
     nx = round(Int, domain_expansion_factor * nx_aoi)
     ny = round(Int, domain_expansion_factor * ny_aoi)
 
-    nt   = Int(5 * nx_aoi)
+    nt   = Int(2 * nx_aoi)
     nvis = 5
 
     dx = lx / (nx - 1)
@@ -630,7 +630,7 @@ end
             water = surface!(ax, xs_roi, ys_roi, η_water_plot;
                 color = η_water_color,
                 colormap = :turbo,
-                colorrange = (0.05, 0.15),
+                colorrange = (-10, 20),
                 shading = true
             )
 
