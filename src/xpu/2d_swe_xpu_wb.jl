@@ -25,7 +25,7 @@ end
 
 using Printf
 
-const h_eps = 1e-12
+const h_eps = 1e-2
 
 @inline avx_comp(hv1, hv2, h, ix, iy) = 0.5 * (hv1[ix, iy] * hv2[ix, iy] / h[ix, iy] + hv1[ix+1, iy] * hv2[ix+1, iy] / h[ix+1, iy])
 @inline avy_comp(hv1, hv2, h, ix, iy) = 0.5 * (hv1[ix, iy] * hv2[ix, iy] / h[ix, iy] + hv1[ix, iy+1] * hv2[ix, iy+1] / h[ix, iy+1])
@@ -54,11 +54,20 @@ const h_eps = 1e-12
 @inline hy_R(h, z, ix, iy) =
     max(0.0, eta(h, z, ix, iy+1) - zy_face(z, ix, iy))
 
-@inline vel_u(h, hu, ix, iy) =
-    h[ix, iy] > h_eps ? hu[ix, iy] / h[ix, iy] : 0.0
+@inline function desing_velocity(hval, qval, vel_eps)
+    if hval <= 0.0
+        return 0.0
+    end
 
-@inline vel_v(h, hv, ix, iy) =
-    h[ix, iy] > h_eps ? hv[ix, iy] / h[ix, iy] : 0.0
+    return sqrt(2.0) * hval * qval /
+           sqrt(hval^4 + max(hval^4, vel_eps))
+end
+
+@inline vel_u(h, hu, ix, iy, vel_eps) =
+    desing_velocity(h[ix, iy], hu[ix, iy], vel_eps)
+
+@inline vel_v(h, hv, ix, iy, vel_eps) =
+    desing_velocity(h[ix, iy], hv[ix, iy], vel_eps)
 
 @inline bc_speed_x(h, hu, ix, iy, g) =
     h[ix, iy] > h_eps ?
@@ -75,7 +84,7 @@ const g = 1.0
 
 @parallel_indices (ix, iy) function compute_maxspeed!(
     max_speed_x, max_speed_y,
-    h, hu, hv, z, g
+    h, hu, hv, z, g, vel_eps
 )
     nx, ny = size(h)
 
@@ -83,8 +92,8 @@ const g = 1.0
         hL = hx_L(h, z, ix, iy)
         hR = hx_R(h, z, ix, iy)
 
-        uL = vel_u(h, hu, ix, iy)
-        uR = vel_u(h, hu, ix+1, iy)
+        uL = vel_u(h, hu, ix, iy, vel_eps)
+        uR = vel_u(h, hu, ix+1, iy, vel_eps)
 
         max_speed_x[ix, iy] = max(
             abs(uL) + sqrt(g * hL),
@@ -96,8 +105,8 @@ const g = 1.0
         hL = hy_L(h, z, ix, iy)
         hR = hy_R(h, z, ix, iy)
 
-        vL = vel_v(h, hv, ix, iy)
-        vR = vel_v(h, hv, ix, iy+1)
+        vL = vel_v(h, hv, ix, iy, vel_eps)
+        vR = vel_v(h, hv, ix, iy+1, vel_eps)
 
         max_speed_y[ix, iy] = max(
             abs(vL) + sqrt(g * hL),
@@ -180,7 +189,8 @@ end
     F₁, F₂, F₃,
     G₁, G₂, G₃,
     hu, hv, h, z, g,
-    max_speed_x, max_speed_y
+    max_speed_x, max_speed_y,
+    vel_eps
 )
     nx, ny = size(h)
 
@@ -194,11 +204,11 @@ end
         ηL = eta(h, z, ix, iy)
         ηR = eta(h, z, ix+1, iy)
 
-        uL = vel_u(h, hu, ix, iy)
-        uR = vel_u(h, hu, ix+1, iy)
+        uL = vel_u(h, hu, ix, iy, vel_eps)
+        uR = vel_u(h, hu, ix+1, iy, vel_eps)
 
-        vL = vel_v(h, hv, ix, iy)
-        vR = vel_v(h, hv, ix+1, iy)
+        vL = vel_v(h, hv, ix, iy, vel_eps)
+        vR = vel_v(h, hv, ix+1, iy, vel_eps)
 
         # Reconstruct momenta consistently:
         # momentum = reconstructed depth × cell velocity
@@ -241,11 +251,11 @@ end
         ηL = eta(h, z, ix, iy)
         ηR = eta(h, z, ix, iy+1)
 
-        uL = vel_u(h, hu, ix, iy)
-        uR = vel_u(h, hu, ix, iy+1)
+        uL = vel_u(h, hu, ix, iy, vel_eps)
+        uR = vel_u(h, hu, ix, iy+1, vel_eps)
 
-        vL = vel_v(h, hv, ix, iy)
-        vR = vel_v(h, hv, ix, iy+1)
+        vL = vel_v(h, hv, ix, iy, vel_eps)
+        vR = vel_v(h, hv, ix, iy+1, vel_eps)
 
         huL = hL * uL
         huR = hR * uR
@@ -739,11 +749,13 @@ end
     nx = round(Int, domain_expansion_factor * nx_aoi)
     ny = round(Int, domain_expansion_factor * ny_aoi)
 
-    nt   = Int(1 * nx_aoi)
+    nt   = Int(5 * nx_aoi)
     nvis = 5
 
     dx = lx / (nx - 1)
     dy = ly / (ny - 1)
+
+    vel_eps = min(dx, dy)^4
 
     _dx  = 1.0 / dx
     _dy  = 1.0 / dy
@@ -823,8 +835,20 @@ end
 
     η0 .= 0 # Ensure free surface is never below the bathymetry
 
-    hmin  = 1e-12
-    h .= max.(hmin, η0 .- z)
+    # add a gaussian bump to the initial condition to generate some wave activity
+    x_c     = -10.0    # X center of the spike
+    y_c     = -20.0    # Y center of the spike
+    σ_spike = 2.5    # Width of the spike (standard deviation)
+    A_spike = 30.0    # Amplitude of the drop/spike
+    for i in eachindex(xs), j in eachindex(ys)
+        x = xs[i]
+        y = ys[j]
+        η0[i, j] += A_spike * exp(-((x - x_c)^2 + (y - y_c)^2) / (2 * σ_spike^2))
+    end
+
+
+    hmin  = 1e-2
+    h .= η0 .- z
 
     dt_drain = @zeros(nx, ny)
 
@@ -862,6 +886,8 @@ end
     # # -------------------------------------------------------------------------
     # # initial condition
     # # -------------------------------------------------------------------------
+
+    time = 0.0
 
     # h_in  = 0.20
     # h_out = 0.10
@@ -976,10 +1002,11 @@ end
     # -------------------------------------------------------------------------
 
     for it in 1:nt
-        @parallel compute_maxspeed!(max_speed_x, max_speed_y, h, hu, hv, z, g)
+        @parallel compute_maxspeed!(max_speed_x, max_speed_y, h, hu, hv, z, g, vel_eps)
 
 
         dt =  0.99 / (maximum(max_speed_x) * _dx + maximum(max_speed_y) * _dy)
+        time += dt
 
         if !isfinite(dt)
             error("Non-finite dt at iteration $it: dt=$dt, max_sx=$(maximum(max_speed_x)), max_sy=$(maximum(max_speed_y))")
@@ -989,7 +1016,7 @@ end
             F₁, F₂, F₃,
             G₁, G₂, G₃,
             hu, hv, h, z, g,
-            max_speed_x, max_speed_y
+            max_speed_x, max_speed_y, vel_eps
         )
 
         @parallel compute_draining_timestep!(
@@ -1081,6 +1108,8 @@ end
         Linf_abs = NaN
         Linf_rel = NaN
     end
+    # print time
+    println("Total simulation time: $(round(time, digits=2)) seconds")
 
     if do_viz
         println("\nSaved $(frame_id[]) frames to: $(abspath(outdir))")
@@ -1088,4 +1117,4 @@ end
     return Linf_abs
 end
 
-swe2d_topography_frames(; outdir = "frames", do_viz = false, force_array_output=false)
+swe2d_topography_frames()
