@@ -44,18 +44,11 @@ const g = 1.0
 min_g(A) = (min_l = minimum(A); MPI.Allreduce(min_l, MPI.MIN, MPI.COMM_WORLD))
 max_g(A) = (max_l = maximum(A); MPI.Allreduce(max_l, MPI.MAX, MPI.COMM_WORLD))
 
-@views function dt_multithread(max_speed_x, max_speed_y, _dx, _dy, n)
-    nthreads = Threads.nthreads()
-    max_speeds_x = zeros(nthreads)
-    max_speeds_y = zeros(nthreads)
+@views function dt_multithread(max_speed_x, max_speed_y, _dx, _dy)
+    max_x = maximum(max_speed_x)
+    max_y = maximum(max_speed_y)
 
-    Threads.@threads for i in 1:n
-        tid = Threads.threadid()
-        max_speeds_x[tid] = max(max_speeds_x[tid], maximum(max_speed_x[:, i]))
-        max_speeds_y[tid] = max(max_speeds_y[tid], maximum(max_speed_y[i, :]))
-    end
-
-    return 0.99 / (max_g(max_speeds_x) * _dx + max_g(max_speeds_y) * _dy)
+    return 0.99 / (max_x * _dx + max_y * _dy)
 end
 
 # -----------------------------------------------------------------------------
@@ -559,7 +552,7 @@ end
         @parallel compute_maxspeed!(max_speed_x, max_speed_y, h, hu, hv, g)
 
         dt = if !USE_GPU
-            dt_multithread(max_speed_x, max_speed_y, _dx, _dy, ny)
+            dt_multithread(max_speed_x, max_speed_y, _dx, _dy)
         else
             0.99 / (max_g(max_speed_x) * _dx + max_g(max_speed_y) * _dy)
         end

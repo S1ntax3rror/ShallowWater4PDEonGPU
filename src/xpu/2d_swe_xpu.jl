@@ -395,6 +395,9 @@ end
     nx_aoi = 250
     ny_aoi = 250
 
+    desired_output_resolution_x = 500 # Desired output resolution in x direction (number of points)
+    desired_output_resolution_y = 500 # Desired output resolution in y direction (number of points) 
+
     # Multiply domain size to allow for sponge layer and BCs
     domain_expansion_factor = 3
 
