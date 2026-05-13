@@ -8,4 +8,4 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --gpus-per-task=1
 
-srun --uenv julia/25.5:v1 --view=juliaup julia --project ../src/xpu/2d_swe_xpu.jl
+srun --uenv julia/25.5:v1 --view=juliaup julia --project src/xpu/2d_swe_xpu.jl
