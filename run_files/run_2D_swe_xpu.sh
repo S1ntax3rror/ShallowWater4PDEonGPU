@@ -1,8 +1,8 @@
 #!/bin/bash -l
 #SBATCH --account=julia-gpu-course2026-ethz
 #SBATCH --job-name="swe_xpu"
-#SBATCH --output=swe_xpu.%j.o
-#SBATCH --error=swe_xpu.%j.e
+#SBATCH --output=out/swe_xpu.%j.o
+#SBATCH --error=out/swe_xpu.%j.e
 #SBATCH --time=03:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
