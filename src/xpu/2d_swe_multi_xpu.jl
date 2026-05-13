@@ -279,6 +279,11 @@ end
     hu = @zeros(nx, ny)
     hv = @zeros(nx, ny)
 
+    # old state for BC check
+    h_old  = @zeros(nx, ny)
+    hu_old = @zeros(nx, ny)
+    hv_old = @zeros(nx, ny)
+
     xs = [x_g(ix, dx, h) - lx / 2 for ix in 1:nx]
     ys = [y_g(iy, dy, h) - ly / 2 for iy in 1:ny]
 
@@ -497,12 +502,17 @@ end
             0.99 / (max_g(max_speed_x) * _dx + max_g(max_speed_y) * _dy)
         end
         
+        h_old  .= h
+        hu_old .= hu
+        hv_old .= hv
+
         @parallel compute_1st_2nd_and_3th_flux!(F₁, F₂, F₃, G₁, G₂, G₃, hu, hv, h, g, max_speed_x, max_speed_y)
-        
+
         @hide_communication b_width begin
             @parallel update_height_momentum!(h, hu, hv, F₁, G₁, F₂, F₃, G₂, G₃, dzdx, dzdy, g, dt, _dx, _dy)            
             update_halo!(h, hu, hv)
         end
+        
         
         @parallel sponge_layer!(hu, hv, σ)
         @parallel positivity_fix!(h, hmin)
