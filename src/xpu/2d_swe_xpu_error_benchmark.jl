@@ -1,13 +1,4 @@
-using Serialization
-
-const HAS_MAKIE = try
-    @eval using GLMakie
-    true
-catch
-    @info "GLMakie not found. Falling back to array output."
-    false
-end
-
+using GLMakie
 using StaticArrays
 using Random
 
@@ -37,10 +28,18 @@ using Printf
 
 const g = 1.0
 
-@views function dt_multithread(max_speed_x, max_speed_y, _dx, _dy)
-    max_x = maximum(max_speed_x)
-    max_y = maximum(max_speed_y)
-    return 0.99 / (max_x * _dx + max_y * _dy)
+@views function dt_multithread(max_speed_x, max_speed_y, _dx, _dy, n)
+    nthreads = Threads.nthreads()
+    max_speeds_x = zeros(nthreads)
+    max_speeds_y = zeros(nthreads)
+
+    Threads.@threads for i in 1:n
+        tid = Threads.threadid()
+        max_speeds_x[tid] = max(max_speeds_x[tid], maximum(max_speed_x[:, i]))
+        max_speeds_y[tid] = max(max_speeds_y[tid], maximum(max_speed_y[i, :]))
+    end
+
+    return 0.99 / (maximum(max_speeds_x) * _dx + maximum(max_speeds_y) * _dy)
 end
 
 # -----------------------------------------------------------------------------
@@ -83,6 +82,7 @@ end
 
 @parallel_indices (ix, iy) function update_height_momentum!(h, hu, hv, F₁, G₁, F₂, F₃, G₂, G₃, dzdx, dzdy, g, dt, _dx, _dy)
     nx, ny = size(h)
+
     if (2 <= ix <= nx-1 && 2 <= iy <= ny-1)
         hu[ix, iy] -= dt * (dxb(F₂, ix, iy) * _dx + dyb(G₂, ix, iy) * _dy + g * h[ix, iy] * dzdx[ix, iy])
         hv[ix, iy] -= dt * (dxb(F₃, ix, iy) * _dx + dyb(G₃, ix, iy) * _dy + g * h[ix, iy] * dzdy[ix, iy])
@@ -91,45 +91,109 @@ end
     return nothing
 end
 
-@parallel_indices (iy) function left_bc!(h, hu, hv, g, dt, _dx)
-    cL = (abs(hu[1, iy] / h[1, iy]) + sqrt(g * h[1, iy])) * dt * _dx
-    αL = (cL - 1) / (cL + 1)
 
-    h[1, iy]  = h[2, iy]  + αL * (h[2, iy]  - h[1, iy])
-    hu[1, iy] = hu[2, iy] + αL * (hu[2, iy] - hu[1, iy])
-    hv[1, iy] = hv[2, iy] + αL * (hv[2, iy] - hv[1, iy])
-    return nothing
-end
+@parallel_indices (ix, iy) function all_bc!(h, hu, hv, g, dt, _dx, _dy)
+    nx, ny = size(h)
 
-@parallel_indices (iy) function right_bc!(h, hu, hv, g, dt, _dx)
-    cR = (abs(hu[end, iy] / h[end, iy]) + sqrt(g * h[end, iy])) * dt * _dx
-    αR = (cR - 1) / (cR + 1)
+    # Left boundary (ix=1)
+    if ix == 1 && iy <= ny
+        cL = (abs(hu[1, iy] / h[1, iy]) + sqrt(g * h[1, iy])) * dt * _dx
+        αL = (cL - 1) / (cL + 1)
 
-    h[end, iy] = h[end-1, iy]  + αR * (h[end-1, iy]  - h[end, iy])
-    hu[end, iy] = hu[end-1, iy] + αR * (hu[end-1, iy] - hu[end, iy])
-    hv[end, iy] = hv[end-1, iy] + αR * (hv[end-1, iy] - hv[end, iy])
+        h1  = h[2, iy]  + αL * (h[2, iy]  - h[1, iy])
+        hu1 = hu[2, iy] + αL * (hu[2, iy] - hu[1, iy])
+        hv1 = hv[2, iy] + αL * (hv[2, iy] - hv[1, iy])
 
-    return nothing
-end
+        cR = (abs(hu[end, iy] / h[end, iy]) + sqrt(g * h[end, iy])) * dt * _dx
+        αR = (cR - 1) / (cR + 1)
 
-@parallel_indices (ix) function bot_bc!(h, hu, hv, g, dt, _dy)
-    cB = (abs(hv[ix, 1] / h[ix, 1]) + sqrt(g * h[ix, 1])) * dt * _dy
-    αB = (cB - 1) / (cB + 1)
+        hR  = h[end-1, iy]  + αR * (h[end-1, iy]  - h[end, iy])
+        huR = hu[end-1, iy] + αR * (hu[end-1, iy] - hu[end, iy])
+        hvR = hv[end-1, iy] + αR * (hv[end-1, iy] - hv[end, iy])
 
-    h[ix, 1] = h[ix, 2]  + αB * (h[ix, 2]  - h[ix, 1])
-    hu[ix, 1] = hu[ix, 2] + αB * (hu[ix, 2] - hu[ix, 1])
-    hv[ix, 1] = hv[ix, 2] + αB * (hv[ix, 2] - hv[ix, 1])
+        h[1, iy]    = h1
+        hu[1, iy]   = hu1
+        hv[1, iy]   = hv1
 
-    return nothing
-end
+        h[end, iy]  = hR
+        hu[end, iy] = huR
+        hv[end, iy] = hvR
+    end
 
-@parallel_indices (ix) function top_bc!(h, hu, hv, g, dt, _dy)
-    cT = (abs(hv[ix, end] / h[ix, end]) + sqrt(g * h[ix, end])) * dt * _dy
-    αT = (cT - 1) / (cT + 1)
+    # Right boundary (ix=nx)
+    if ix == nx && iy <= ny
+        cL = (abs(hu[1, iy] / h[1, iy]) + sqrt(g * h[1, iy])) * dt * _dx
+        αL = (cL - 1) / (cL + 1)
 
-    h[ix, end]  = h[ix, end-1]  + αT * (h[ix, end-1]  - h[ix, end])
-    hu[ix, end] = hu[ix, end-1] + αT * (hu[ix, end-1] - hu[ix, end])
-    hv[ix, end] = hv[ix, end-1] + αT * (hv[ix, end-1] - hv[ix, end])
+        h1  = h[2, iy]  + αL * (h[2, iy]  - h[1, iy])
+        hu1 = hu[2, iy] + αL * (hu[2, iy] - hu[1, iy])
+        hv1 = hv[2, iy] + αL * (hv[2, iy] - hv[1, iy])
+
+        cR = (abs(hu[end, iy] / h[end, iy]) + sqrt(g * h[end, iy])) * dt * _dx
+        αR = (cR - 1) / (cR + 1)
+
+        hR  = h[end-1, iy]  + αR * (h[end-1, iy]  - h[end, iy])
+        huR = hu[end-1, iy] + αR * (hu[end-1, iy] - hu[end, iy])
+        hvR = hv[end-1, iy] + αR * (hv[end-1, iy] - hv[end, iy])
+
+        h[1, iy]    = h1
+        hu[1, iy]   = hu1
+        hv[1, iy]   = hv1
+
+        h[end, iy]  = hR
+        hu[end, iy] = huR
+        hv[end, iy] = hvR
+    end
+
+    # Bottom boundary (iy=1)
+    if iy == 1 && ix <= nx
+        cB = (abs(hv[ix, 1] / h[ix, 1]) + sqrt(g * h[ix, 1])) * dt * _dy
+        αB = (cB - 1) / (cB + 1)
+
+        hB  = h[ix, 2]  + αB * (h[ix, 2]  - h[ix, 1])
+        huB = hu[ix, 2] + αB * (hu[ix, 2] - hu[ix, 1])
+        hvB = hv[ix, 2] + αB * (hv[ix, 2] - hv[ix, 1])
+
+        cT = (abs(hv[ix, end] / h[ix, end]) + sqrt(g * h[ix, end])) * dt * _dy
+        αT = (cT - 1) / (cT + 1)
+
+        hT  = h[ix, end-1]  + αT * (h[ix, end-1]  - h[ix, end])
+        huT = hu[ix, end-1] + αT * (hu[ix, end-1] - hu[ix, end])
+        hvT = hv[ix, end-1] + αT * (hv[ix, end-1] - hv[ix, end])
+
+        h[ix, 1]    = hB
+        hu[ix, 1]   = huB
+        hv[ix, 1]   = hvB
+
+        h[ix, end]  = hT
+        hu[ix, end] = huT
+        hv[ix, end] = hvT
+    end
+
+    # Top boundary (iy=ny)
+    if iy == ny && ix <= nx
+        cB = (abs(hv[ix, 1] / h[ix, 1]) + sqrt(g * h[ix, 1])) * dt * _dy
+        αB = (cB - 1) / (cB + 1)
+
+        hB  = h[ix, 2]  + αB * (h[ix, 2]  - h[ix, 1])
+        huB = hu[ix, 2] + αB * (hu[ix, 2] - hu[ix, 1])
+        hvB = hv[ix, 2] + αB * (hv[ix, 2] - hv[ix, 1])
+
+        cT = (abs(hv[ix, end] / h[ix, end]) + sqrt(g * h[ix, end])) * dt * _dy
+        αT = (cT - 1) / (cT + 1)
+
+        hT  = h[ix, end-1]  + αT * (h[ix, end-1]  - h[ix, end])
+        huT = hu[ix, end-1] + αT * (hu[ix, end-1] - hu[ix, end])
+        hvT = hv[ix, end-1] + αT * (hv[ix, end-1] - hv[ix, end])
+
+        h[ix, 1]    = hB
+        hu[ix, 1]   = huB
+        hv[ix, 1]   = hvB
+
+        h[ix, end]  = hT
+        hu[ix, end] = huT
+        hv[ix, end] = hvT
+    end
     return nothing
 end
 
@@ -241,7 +305,7 @@ function load_topography_data(domain_expansion_factor, nx_aoi_ext, ny_aoi_ext)
     read_values(filename) = parse.(Float64, split(read(filename, String)))
 
     z_vec = read_values(base_file)
-    η0_vec = read_values(wave_file)
+    η0_vec = zeros(nx_aoi, ny_aoi)
 
     if length(z_vec) != nx_aoi * ny_aoi || length(η0_vec) != nx_aoi * ny_aoi
         error("Data files do not match expected dimensions.")
@@ -324,15 +388,12 @@ end
 # Main
 # -----------------------------------------------------------------------------
 
-@views function swe2d_topography_frames(; outdir = "frames", do_viz = true, force_array_output=false)
+@views function swe2d_topography_frames(nx_aoi, ny_aoi; outdir = "frames", do_viz = true)
     # physics and numerics
     lx_aoi = 50.0 # aoi = area of interest
     ly_aoi = 50.0
-    nx_aoi = 125
-    ny_aoi = 125
-
-    desired_output_resolution_x = 500 # Desired output resolution in x direction (number of points)
-    desired_output_resolution_y = 500 # Desired output resolution in y direction (number of points) 
+    #nx_aoi = 125
+    #ny_aoi = 125
 
     # Multiply domain size to allow for sponge layer and BCs
     domain_expansion_factor = 3
@@ -383,64 +444,14 @@ end
     max_speed_x = @zeros(nx - 1, ny)
     max_speed_y = @zeros(nx, ny - 1)
 
-    # -------------------------------------------------------------------------
-    # topography
-    # -------------------------------------------------------------------------
-    # islands = [
-    # Island(-10.0,  0.0, 0.12, 3.0, 4.5),   # above free surface if η≈0.10 outside
-    # Island(  9.0,  6.0, 0.105,5.0, 6.5),   # submerged bump
-    # Island(  5.0, -8.0, 0.12, 2.5, 4.0),
-    # Island( 15.0, -3.0, 0.11, 2.0, 7.0),
-    # Island(-12.0,  8.0, 0.11, 3.0, 5.0),
-    # Island(-15.0,-13.0, 0.12, 4.5, 6.0)   # clearly emergent   
-    # ]
-
-
-    # z = build_topography(xs, ys; islands=[], background= (xs, ys) -> background_bumps(xs, ys, seed=43))
-
-    # # -------------------------------------------------------------------------
-    # # Thacker's Bowl
-    # # -------------------------------------------------------------------------
-    # h0 = 0.1    # Water depth at center
-    # a  = 10.0   # Distance to zero elevation
-    # B  = 0.05   # Amplitude of the slosh
-    # ω  = sqrt(2 * g * h0) / a # Angular frequency
-
-    # # Parabolic Topography
-    # z = [h0 * ((x^2 + y^2) / a^2) for x in xs, y in ys]
-
-    # # Tilted Planar Free Surface (Initial State at t=0)
-    # η0 = [h0 - h0 * ((x^2 + y^2) / a^2) + B * x for x in xs, y in ys]
-    
-    # # h will naturally go to 0 at the edges of the bowl
-    # hmin  = 1e-6
-    # h .= max.(hmin, η0 .- z)
-
-
-    # -------------------------------------------------------------------------
-    # Thacker's Bowl with Gaussian Spike
-    # -------------------------------------------------------------------------
-    h0 = 0.1    # Water depth at center
-    a  = 10.0   # Distance to zero elevation
-    B  = 0.05   # Amplitude of the slosh
-    ω  = sqrt(2 * g * h0) / a # Angular frequency
-
-    # Gaussian Spike Parameters
-    # A_spike = 0.3   # Amplitude of the drop/spike
-    # x_c     = 3.0    # X center of the spike
-    # y_c     = 3.0    # Y center of the spike
-    # σ_spike = 1.5    # Width of the spike (standard deviation)
-
-    # # Parabolic Topography
-    # z = [h0 * ((x^2 + y^2) / a^2) for x in xs, y in ys]
-
-    # # Tilted Planar Free Surface + Gaussian Spike
-    # η0 = [h0 - h0 * ((x^2 + y^2) / a^2) + B * x + 
-    #       A_spike * exp(-((x - x_c)^2 + (y - y_c)^2) / (2 * σ_spike^2)) 
-    #       for x in xs, y in ys]
     
 
     z, η0 = load_topography_data(domain_expansion_factor, nx_aoi, ny_aoi)
+
+    η0_const = maximum(z) + 0.1
+    h .= η0_const .- z
+
+    η0 .= η0_const
 
     hmin  = 1e-6
     h .= max.(hmin, η0 .- z)
@@ -484,127 +495,81 @@ end
                 σmax .* (1 .- d .* _layers),
                 zero(eltype(σ)))
 
-    # # -------------------------------------------------------------------------
-    # # initial condition
-    # # -------------------------------------------------------------------------
-
-    # h_in  = 0.20
-    # h_out = 0.10
-    # r0    = 2.5
-    # hmin  = 1e-6
-
-    # η0 = [((x^2 + y^2) < r0^2) ? h_in : h_out for x in xs, y in ys]
-    # h .= max.(hmin, η0 .- z)
-
-    # -------------------------------------------------------------------------
-    # initial condition
-    # -------------------------------------------------------------------------
-
-    # h_out = 0.10          # background free-surface level
-    # a     = 0.08          # wave amplitude
-    # y0    = 20.0          # crest location
-    # σy    = 3.0           # wave width
-    # hmin  = 1e-6
-
-    # # free surface eta(x,y) = eta(y), homogeneous in x
-    # # η0 = [h_out + a * exp(-((y - y0)^2) / (2 * σy^2)) for x in xs, y in ys]
-    # η0 = h_out
-
-    # # water depth
-    # h .= max.(hmin, η0 .- z)
-    
-
-    # -------------------------------------------------------------------------
-    # visualization
-    # -------------------------------------------------------------------------
-
     if do_viz
-        use_makie = HAS_MAKIE && !force_array_output
-        print("Using visualization: ", use_makie ? "Makie" : "Array output")
         mkpath(outdir)
 
+        vertical_exaggeration = 6.0
+        hmin_plot = 1e-3
+        
         z_slice = z[ix_roi, iy_roi]
+        z_plot = vertical_exaggeration .* z_slice
+
+        # terrain color as full matrix, not a single Symbol
+        terrain_color = fill(RGBf(0.82, 0.82, 0.82), size(z_plot))
+
         h_slice = h[ix_roi, iy_roi]
 
-        if use_makie
-            vertical_exaggeration = 6.0
-            hmin_plot = 1e-3
-            
-            z_plot = vertical_exaggeration .* z_slice
+        η_water_plot0  = vertical_exaggeration .* (h_slice .+ z_slice)
+        η_water_color0 = h_slice .+ z_slice
 
-            # terrain color as full matrix, not a single Symbol
-            terrain_color = fill(RGBf(0.82, 0.82, 0.82), size(z_plot))
+        η_water_plot0[h_slice .<= hmin_plot]  .= NaN
+        η_water_color0[h_slice .<= hmin_plot] .= NaN
 
-            η_water_plot0  = vertical_exaggeration .* (h_slice .+ z_slice)
-            η_water_color0 = h_slice .+ z_slice
+        η_water_plot  = Observable(η_water_plot0)
+        η_water_color = Observable(η_water_color0)
 
-            η_water_plot0[h_slice .<= hmin_plot]  .= NaN
-            η_water_color0[h_slice .<= hmin_plot] .= NaN
+        fig = Figure(size = (1200, 900))
+        ax = Axis3(
+            fig[1, 1],
+            xlabel = "x",
+            ylabel = "y",
+            zlabel = "height",
+            aspect = (1, 1, 0.25),
+            azimuth = -1.1 - π/2,
+            elevation = 0.45,
+            perspectiveness = 0.35
+        )
 
-            η_water_plot  = Observable(η_water_plot0)
-            η_water_color = Observable(η_water_color0)
+        # gray terrain / islands
+        surface!(ax, xs_roi, ys_roi, z_plot;
+            color = terrain_color,
+            shading = true
+        )
 
-            fig = Figure(size = (1200, 900))
-            ax = Axis3(
-                fig[1, 1],
-                xlabel = "x",
-                ylabel = "y",
-                zlabel = "height",
-                aspect = (1, 1, 0.25),
-                azimuth = -1.1 - π/2,
-                elevation = 0.45,
-                perspectiveness = 0.35
-            )
+        # water only
+        water = surface!(ax, xs_roi, ys_roi, η_water_plot;
+            color = η_water_color,
+            colormap = :turbo,
+            colorrange = (0.05, 0.15),
+            shading = true
+        )
 
-            # gray terrain / islands
-            surface!(ax, xs_roi, ys_roi, z_plot;
-                color = terrain_color,
-                shading = true
-            )
+        Colorbar(fig[1, 2], water, label = "free surface")
+        display(fig)
 
-            # water only
-            water = surface!(ax, xs_roi, ys_roi, η_water_plot;
-                color = η_water_color,
-                colormap = :turbo,
-                colorrange = (-10, 20),
-                shading = true
-            )
+        frame_id = Ref(0)
 
-            Colorbar(fig[1, 2], water, label = "free surface")
-            display(fig)
-
-            frame_id = Ref(0)
-
-            function save_frame!()
-                frame_id[] += 1
-                fname = joinpath(outdir, @sprintf("frame_%06d.png", frame_id[]))
-                save(fname, fig)
-            end
-            save_frame!()
-
-        else
-            frame_id = Ref(0)
-            @info "Saving arrays to $outdir"
-            function save_array!()
-                frame_id[] += 1
-                # Save as a standard Julia serialized file
-                fname = joinpath(outdir, @sprintf("array_frame_%06d.jls", frame_id[]))
-                # Storing a NamedTuple containing the ROI arrays
-                serialize(fname, (h=convert.(Float32, h_slice), z=convert.(Float32, z_slice)))
-            end
-            save_array!()
+        function save_frame!()
+            frame_id[] += 1
+            fname = joinpath(outdir, @sprintf("frame_%06d.png", frame_id[]))
+            save(fname, fig)
         end
+
+        save_frame!()
     end
 
     # -------------------------------------------------------------------------
     # main loop
     # -------------------------------------------------------------------------
 
+    initial_err = maximum(abs.(h[ix_roi, iy_roi] .+ z[ix_roi, iy_roi] .- η0_const))
+    println("initial lake-at-rest error = ", initial_err)
+
     for it in 1:nt
         @parallel compute_maxspeed!(max_speed_x, max_speed_y, h, hu, hv, g)
 
         dt = if !USE_GPU
-            dt_multithread(max_speed_x, max_speed_y, _dx, _dy)
+            dt_multithread(max_speed_x, max_speed_y, _dx, _dy, ny)
         else
             0.99 / (maximum(max_speed_x) * _dx + maximum(max_speed_y) * _dy)
         end
@@ -613,10 +578,7 @@ end
 
         @parallel update_height_momentum!(h, hu, hv, F₁, G₁, F₂, F₃, G₂, G₃, dzdx, dzdy, g, dt, _dx, _dy)
 
-        @parallel (1:ny) left_bc!(h, hu, hv, g, dt, _dy)
-        @parallel (1:ny) right_bc!(h, hu, hv, g, dt, _dy)
-        @parallel (1:nx) top_bc!(h, hu, hv, g, dt, _dx)
-        @parallel (1:nx) bot_bc!(h, hu, hv, g, dt, _dx)
+        @parallel all_bc!(h, hu, hv, g, dt, _dx, _dy)
 
         @parallel sponge_layer!(hu, hv, σ)
         @parallel positivity_fix!(h, hmin)
@@ -626,20 +588,16 @@ end
                 h_slice = h[ix_roi, iy_roi]
                 z_slice = z[ix_roi, iy_roi]
 
-                if use_makie
-                    ηtmp_plot  = vertical_exaggeration .* (h_slice .+ z_slice)
-                    ηtmp_color = h_slice .+ z_slice
+                ηtmp_plot  = vertical_exaggeration .* (h_slice .+ z_slice)
+                ηtmp_color = h_slice .+ z_slice
 
-                    ηtmp_plot[h_slice .<= hmin_plot]  .= NaN
-                    ηtmp_color[h_slice .<= hmin_plot] .= NaN
+                ηtmp_plot[h_slice .<= hmin_plot]  .= NaN
+                ηtmp_color[h_slice .<= hmin_plot] .= NaN
 
-                    η_water_plot[]  = ηtmp_plot
-                    η_water_color[] = ηtmp_color
+                η_water_plot[]  = ηtmp_plot
+                η_water_color[] = ηtmp_color
 
-                    save_frame!()
-                else
-                    save_array!()
-                end
+                save_frame!()
             end
 
         end
@@ -649,36 +607,47 @@ end
         flush(stdout)
     end
 
-    # -------------------------------------------------------------------------
-    # Validation
-    # -------------------------------------------------------------------------
+    h_slice = h[ix_roi, iy_roi]
+    z_slice = z[ix_roi, iy_roi]
 
-    # Check the boundaries of the ROI
-    # is_preserved = check_bc_preserves_eta(h, z, η0, ix_roi, iy_roi)
-    
-    # Total error inside the ROI 
-    # h_roi = h[ix_roi, iy_roi]
-    # z_roi = z[ix_roi, iy_roi]
-    # max_err_roi = maximum(abs.(η0 .- (h_roi .+ z_roi)))
-    
-    # println("\nValidation Results:")
-    # println("ROI boundaries preserved within tolerance? ", is_preserved)
-    # println("Maximum error across entire ROI: ", max_err_roi)
-    
-    # max_err = maximum(η0.-(h+z))
-    # rel_err = max_err/η0
-    # print("relative error: ", rel_err)
+    η_0 = zeros(nx_aoi, ny_aoi)
+
 
     # Calculate global errors
-    max_err = maximum(abs.(η0 .- (h .+ z)))
-    max_η0_val = η0 isa AbstractArray ? maximum(abs.(η0)) : abs(η0)
+    max_err = maximum(abs.(η_0 .- (h_slice .+ z_slice)))
+    max_η0_val = h_slice isa AbstractArray ? maximum(abs.(h_slice)) : abs(h_slice)
     rel_err = max_err / max_η0_val
     println("relative error: ", rel_err)
+
+    # print average height
+    avg_height = mean(h_slice)
+    println("average height in ROI: ", avg_height)
 
     if do_viz
         println("\nSaved $(frame_id[]) frames to: $(abspath(outdir))")
     end
-    return nothing
+    return rel_err
 end
+
+# error benchmark
+
+# resolutions
+resolutions = [25, 50, 100, 125, 250, 500, 1000]
+
+errors = Float64[]
+
+for res in resolutions
+    println("\nRunning benchmark for resolution: $(res)x$(res)")
+    error = swe2d_topography_frames(res, res; outdir = "frames_$(res)x$(res)", do_viz = false)
+    push!(errors, error)
+end
+
+# plot errors
+
+using Plots
+
+plot(resolutions, errors, xscale=:log10, yscale=:log10, marker=:o, xlabel="Resolution (nx=ny)", ylabel="Relative Error", title="Error Benchmark for 2D SWE with Topography", legend=false)
+savefig("docs/swe2d_topography_error_benchmark.png")
+
 
 swe2d_topography_frames()

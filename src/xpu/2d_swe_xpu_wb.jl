@@ -25,6 +25,8 @@ end
 
 using Printf
 
+const h_eps = 1e-12
+
 @inline avx_comp(hv1, hv2, h, ix, iy) = 0.5 * (hv1[ix, iy] * hv2[ix, iy] / h[ix, iy] + hv1[ix+1, iy] * hv2[ix+1, iy] / h[ix+1, iy])
 @inline avy_comp(hv1, hv2, h, ix, iy) = 0.5 * (hv1[ix, iy] * hv2[ix, iy] / h[ix, iy] + hv1[ix, iy+1] * hv2[ix, iy+1] / h[ix, iy+1])
 @inline avx_simp(h, ix, iy) = 0.5 * (h[ix, iy] * h[ix, iy] + h[ix+1, iy] * h[ix+1, iy])
@@ -35,101 +37,470 @@ using Printf
 @inline dxb(h, ix, iy) = h[ix, iy] - h[ix-1, iy]
 @inline dyb(h, ix, iy) = h[ix, iy] - h[ix, iy-1]
 
+@inline eta(h, z, ix, iy) = h[ix, iy] + z[ix, iy]
+
+@inline zx_face(z, ix, iy) = 0.5 * (z[ix, iy] + z[ix+1, iy])
+@inline zy_face(z, ix, iy) = 0.5 * (z[ix, iy] + z[ix, iy+1])
+
+@inline hx_L(h, z, ix, iy) =
+    max(0.0, eta(h, z, ix, iy) - zx_face(z, ix, iy))
+
+@inline hx_R(h, z, ix, iy) =
+    max(0.0, eta(h, z, ix+1, iy) - zx_face(z, ix, iy))
+
+@inline hy_L(h, z, ix, iy) =
+    max(0.0, eta(h, z, ix, iy) - zy_face(z, ix, iy))
+
+@inline hy_R(h, z, ix, iy) =
+    max(0.0, eta(h, z, ix, iy+1) - zy_face(z, ix, iy))
+
+@inline vel_u(h, hu, ix, iy) =
+    h[ix, iy] > h_eps ? hu[ix, iy] / h[ix, iy] : 0.0
+
+@inline vel_v(h, hv, ix, iy) =
+    h[ix, iy] > h_eps ? hv[ix, iy] / h[ix, iy] : 0.0
+
+@inline bc_speed_x(h, hu, ix, iy, g) =
+    h[ix, iy] > h_eps ?
+        abs(hu[ix, iy] / h[ix, iy]) + sqrt(g * h[ix, iy]) :
+        0.0
+
+@inline bc_speed_y(h, hv, ix, iy, g) =
+    h[ix, iy] > h_eps ?
+        abs(hv[ix, iy] / h[ix, iy]) + sqrt(g * h[ix, iy]) :
+        0.0
+
 const g = 1.0
 
-@views function dt_multithread(max_speed_x, max_speed_y, _dx, _dy)
-    max_x = maximum(max_speed_x)
-    max_y = maximum(max_speed_y)
-    return 0.99 / (max_x * _dx + max_y * _dy)
+
+@parallel_indices (ix, iy) function compute_maxspeed!(
+    max_speed_x, max_speed_y,
+    h, hu, hv, z, g
+)
+    nx, ny = size(h)
+
+    if ix <= nx - 1 && iy <= ny
+        hL = hx_L(h, z, ix, iy)
+        hR = hx_R(h, z, ix, iy)
+
+        uL = vel_u(h, hu, ix, iy)
+        uR = vel_u(h, hu, ix+1, iy)
+
+        max_speed_x[ix, iy] = max(
+            abs(uL) + sqrt(g * hL),
+            abs(uR) + sqrt(g * hR)
+        )
+    end
+
+    if ix <= nx && iy <= ny - 1
+        hL = hy_L(h, z, ix, iy)
+        hR = hy_R(h, z, ix, iy)
+
+        vL = vel_v(h, hv, ix, iy)
+        vR = vel_v(h, hv, ix, iy+1)
+
+        max_speed_y[ix, iy] = max(
+            abs(vL) + sqrt(g * hL),
+            abs(vR) + sqrt(g * hR)
+        )
+    end
+
+    return nothing
 end
 
 # -----------------------------------------------------------------------------
 # Kernels
 # -----------------------------------------------------------------------------
 
-@parallel_indices (ix, iy) function compute_maxspeed!(max_speed_x, max_speed_y, h, hu, hv, g)
+@parallel_indices (ix, iy) function compute_draining_timestep!(
+    dt_drain,
+    F₁, G₁,
+    h,
+    dt,
+    _dx, _dy
+)
     nx, ny = size(h)
-    if (ix <= nx - 1 && iy <= ny)
-        max_speed_x[ix, iy] = max(
-            abs(hu[ix, iy] / h[ix, iy]) + sqrt(g * h[ix, iy]),
-            abs(hu[ix+1, iy] / h[ix+1, iy]) + sqrt(g * h[ix+1, iy])
+
+    if 2 <= ix <= nx-1 && 2 <= iy <= ny-1
+        out_x =
+            max(F₁[ix, iy], 0.0) +
+            max(-F₁[ix-1, iy], 0.0)
+
+        out_y =
+            max(G₁[ix, iy], 0.0) +
+            max(-G₁[ix, iy-1], 0.0)
+
+        drain_rate = out_x * _dx + out_y * _dy
+
+        if drain_rate > 0.0
+            dt_drain[ix, iy] = min(dt, h[ix, iy] / drain_rate)
+        else
+            dt_drain[ix, iy] = dt
+        end
+    end
+
+    return nothing
+end
+
+@parallel_indices (ix, iy) function compute_effective_flux_timesteps!(
+    dtFx, dtGy,
+    dt_drain,
+    F₁, G₁,
+    dt
+)
+    nxm1, ny = size(F₁)
+    nx, nym1 = size(G₁)
+
+    # x-faces
+    if ix <= nxm1 && iy <= ny
+        if F₁[ix, iy] > 0.0
+            dtFx[ix, iy] = min(dt, dt_drain[ix, iy])
+        elseif F₁[ix, iy] < 0.0
+            dtFx[ix, iy] = min(dt, dt_drain[ix+1, iy])
+        else
+            dtFx[ix, iy] = dt
+        end
+    end
+
+    # y-faces
+    if ix <= nx && iy <= nym1
+        if G₁[ix, iy] > 0.0
+            dtGy[ix, iy] = min(dt, dt_drain[ix, iy])
+        elseif G₁[ix, iy] < 0.0
+            dtGy[ix, iy] = min(dt, dt_drain[ix, iy+1])
+        else
+            dtGy[ix, iy] = dt
+        end
+    end
+
+    return nothing
+end
+
+@parallel_indices (ix, iy) function compute_1st_2nd_and_3th_flux!(
+    F₁, F₂, F₃,
+    G₁, G₂, G₃,
+    hu, hv, h, z, g,
+    max_speed_x, max_speed_y
+)
+    nx, ny = size(h)
+
+    # -------------------------------------------------------------------------
+    # x-direction fluxes
+    # -------------------------------------------------------------------------
+    if ix <= nx - 1 && iy <= ny
+        hL = hx_L(h, z, ix, iy)
+        hR = hx_R(h, z, ix, iy)
+
+        ηL = eta(h, z, ix, iy)
+        ηR = eta(h, z, ix+1, iy)
+
+        uL = vel_u(h, hu, ix, iy)
+        uR = vel_u(h, hu, ix+1, iy)
+
+        vL = vel_v(h, hv, ix, iy)
+        vR = vel_v(h, hv, ix+1, iy)
+
+        # Reconstruct momenta consistently:
+        # momentum = reconstructed depth × cell velocity
+        huL = hL * uL
+        huR = hR * uR
+        hvL = hL * vL
+        hvR = hR * vR
+
+        ax = max_speed_x[ix, iy]
+
+        # Mass / free-surface flux
+        F₁[ix, iy] =
+            0.5 * (huL + huR) -
+            0.5 * ax * (ηR - ηL)
+
+        # x-momentum flux
+        F₂[ix, iy] =
+            0.5 * (
+                huL * uL + 0.5 * g * hL^2 +
+                huR * uR + 0.5 * g * hR^2
+            ) -
+            0.5 * ax * (huR - huL)
+
+        # y-momentum transported in x
+        F₃[ix, iy] =
+            0.5 * (
+                huL * vL +
+                huR * vR
+            ) -
+            0.5 * ax * (hvR - hvL)
+    end
+
+    # -------------------------------------------------------------------------
+    # y-direction fluxes
+    # -------------------------------------------------------------------------
+    if ix <= nx && iy <= ny - 1
+        hL = hy_L(h, z, ix, iy)
+        hR = hy_R(h, z, ix, iy)
+
+        ηL = eta(h, z, ix, iy)
+        ηR = eta(h, z, ix, iy+1)
+
+        uL = vel_u(h, hu, ix, iy)
+        uR = vel_u(h, hu, ix, iy+1)
+
+        vL = vel_v(h, hv, ix, iy)
+        vR = vel_v(h, hv, ix, iy+1)
+
+        huL = hL * uL
+        huR = hR * uR
+        hvL = hL * vL
+        hvR = hR * vR
+
+        ay = max_speed_y[ix, iy]
+
+        # Mass / free-surface flux
+        G₁[ix, iy] =
+            0.5 * (hvL + hvR) -
+            0.5 * ay * (ηR - ηL)
+
+        # x-momentum transported in y
+        G₂[ix, iy] =
+            0.5 * (
+                hvL * uL +
+                hvR * uR
+            ) -
+            0.5 * ay * (huR - huL)
+
+        # y-momentum flux
+        G₃[ix, iy] =
+            0.5 * (
+                hvL * vL + 0.5 * g * hL^2 +
+                hvR * vR + 0.5 * g * hR^2
+            ) -
+            0.5 * ay * (hvR - hvL)
+    end
+
+    return nothing
+end
+
+
+
+# @parallel_indices (ix, iy) function update_height_momentum!(h, hu, hv, F₁, G₁, F₂, F₃, G₂, G₃, dzdx, dzdy, g, dt, _dx, _dy)
+#     nx, ny = size(h)
+#     if (2 <= ix <= nx-1 && 2 <= iy <= ny-1)
+#         hu[ix, iy] -= dt * (dxb(F₂, ix, iy) * _dx + dyb(G₂, ix, iy) * _dy + g * h[ix, iy] * dzdx[ix, iy])
+#         hv[ix, iy] -= dt * (dxb(F₃, ix, iy) * _dx + dyb(G₃, ix, iy) * _dy + g * h[ix, iy] * dzdy[ix, iy])
+#         h[ix, iy] -= dt * (dxb(F₁, ix, iy) * _dx + dyb(G₁, ix, iy) * _dy)
+#     end
+#     return nothing
+# end
+
+@parallel_indices (ix, iy) function update_height_momentum!(
+    h, hu, hv,
+    F₁, G₁, F₂, F₃, G₂, G₃, dtFx, dtGy,
+    z, g, dt, _dx, _dy
+)
+    nx, ny = size(h)
+
+    if 2 <= ix <= nx-1 && 2 <= iy <= ny-1
+        ηC = eta(h, z, ix, iy)
+
+        # ---------------------------------------------------------------------
+        # x-source term
+        # ---------------------------------------------------------------------
+        zE = 0.5 * (z[ix, iy] + z[ix+1, iy])
+        zW = 0.5 * (z[ix-1, iy] + z[ix, iy])
+
+        hE = max(0.0, ηC - zE)
+        hW = max(0.0, ηC - zW)
+
+        hsrc_x = 0.5 * (hE + hW)
+        dzdx_face = (zE - zW) * _dx
+
+        # ---------------------------------------------------------------------
+        # y-source term
+        # ---------------------------------------------------------------------
+        zN = 0.5 * (z[ix, iy] + z[ix, iy+1])
+        zS = 0.5 * (z[ix, iy-1] + z[ix, iy])
+
+        hN = max(0.0, ηC - zN)
+        hS = max(0.0, ηC - zS)
+
+        hsrc_y = 0.5 * (hN + hS)
+        dzdy_face = (zN - zS) * _dy
+
+        # ---------------------------------------------------------------------
+        # Momentum updates first
+        # ---------------------------------------------------------------------
+        hu[ix, iy] -= dt * (
+            dxb(F₂, ix, iy) * _dx +
+            dyb(G₂, ix, iy) * _dy +
+            g * hsrc_x * dzdx_face
         )
-    end
-    if (ix <= nx && iy <= ny - 1)
-        max_speed_y[ix, iy] = max(
-            abs(hv[ix, iy] / h[ix, iy]) + sqrt(g * h[ix, iy]),
-            abs(hv[ix, iy+1] / h[ix, iy+1]) + sqrt(g * h[ix, iy+1])
+
+        hv[ix, iy] -= dt * (
+            dxb(F₃, ix, iy) * _dx +
+            dyb(G₃, ix, iy) * _dy +
+            g * hsrc_y * dzdy_face
         )
+
+        # ---------------------------------------------------------------------
+        # Water-depth update
+        # Since z is stationary, h_t = η_t
+        # ---------------------------------------------------------------------
+        h[ix, iy] -= (
+            (F₁[ix, iy] * dtFx[ix, iy] -
+            F₁[ix-1, iy] * dtFx[ix-1, iy]) * _dx
+            +
+            (G₁[ix, iy] * dtGy[ix, iy] -
+            G₁[ix, iy-1] * dtGy[ix, iy-1]) * _dy
+        )
+
     end
+
     return nothing
 end
 
-@parallel_indices (ix, iy) function compute_1st_2nd_and_3th_flux!(F₁, F₂, F₃, G₁, G₂, G₃, hu, hv, h, g, max_speed_x, max_speed_y)
+
+@parallel_indices (ix, iy) function all_bc!(h, hu, hv, g, dt, _dx, _dy)
     nx, ny = size(h)
-    if (ix <= nx - 1 && iy <= ny)
-        F₁[ix, iy] = 0.5 * (hu[ix, iy] + hu[ix+1, iy]) - 0.5 * max_speed_x[ix, iy] * dxa(h, ix, iy)
-        F₂[ix, iy] = avx_comp(hu, hu, h, ix, iy) + 0.5 * g * avx_simp(h, ix, iy) - 0.5 * max_speed_x[ix, iy] * dxa(hu, ix, iy)
-        F₃[ix, iy] = avx_comp(hu, hv, h, ix, iy) - 0.5 * max_speed_x[ix, iy] * dxa(hv, ix, iy)
+
+    # Left boundary (ix=1)
+    if ix == 1 && iy <= ny
+        cL = bc_speed_x(h, hu, 1, iy, g) * dt * _dx
+        αL = (cL - 1) / (cL + 1)
+
+        h1  = max(0.0, h[2, iy] + αL * (h[2, iy] - h[1, iy]))
+        hu1 = hu[2, iy] + αL * (hu[2, iy] - hu[1, iy])
+        hv1 = hv[2, iy] + αL * (hv[2, iy] - hv[1, iy])
+
+        if h1 <= h_eps
+            hu1 = 0.0
+            hv1 = 0.0
+        end
+
+        cR = bc_speed_x(h, hu, nx, iy, g) * dt * _dx
+        αR = (cR - 1) / (cR + 1)
+
+        hR  = max(0.0, h[end-1, iy]  + αR * (h[end-1, iy]  - h[end, iy]))
+        huR = hu[end-1, iy] + αR * (hu[end-1, iy] - hu[end, iy])
+        hvR = hv[end-1, iy] + αR * (hv[end-1, iy] - hv[end, iy])
+
+        if hR <= h_eps
+            huR = 0.0
+            hvR = 0.0
+        end
+
+        h[1, iy]    = h1
+        hu[1, iy]   = hu1
+        hv[1, iy]   = hv1
+
+        h[end, iy]  = hR
+        hu[end, iy] = huR
+        hv[end, iy] = hvR
     end
-    if (ix <= nx && iy <= ny - 1)
-        G₁[ix, iy] = 0.5 * (hv[ix, iy] + hv[ix, iy+1]) - 0.5 * max_speed_y[ix, iy] * dya(h, ix, iy)
-        G₂[ix, iy] = avy_comp(hv, hu, h, ix, iy) - 0.5 * max_speed_y[ix, iy] * dya(hu, ix, iy)
-        G₃[ix, iy] = avy_comp(hv, hv, h, ix, iy) + 0.5 * g * avy_simp(h, ix, iy) - 0.5 * max_speed_y[ix, iy] * dya(hv, ix, iy)
+
+    # Right boundary (ix=nx)
+    if ix == nx && iy <= ny
+        cL = bc_speed_x(h, hu, 1, iy, g) * dt * _dx
+        αL = (cL - 1) / (cL + 1)
+
+        h1  = max(0.0, h[2, iy] + αL * (h[2, iy] - h[1, iy]))
+        hu1 = hu[2, iy] + αL * (hu[2, iy] - hu[1, iy])
+        hv1 = hv[2, iy] + αL * (hv[2, iy] - hv[1, iy])
+
+        if h1 <= h_eps
+            hu1 = 0.0
+            hv1 = 0.0
+        end
+    
+
+        cR = bc_speed_x(h, hu, nx, iy, g) * dt * _dx
+        αR = (cR - 1) / (cR + 1)
+
+        hR  = max(0.0, h[end-1, iy]  + αR * (h[end-1, iy]  - h[end, iy]))
+        huR = hu[end-1, iy] + αR * (hu[end-1, iy] - hu[end, iy])
+        hvR = hv[end-1, iy] + αR * (hv[end-1, iy] - hv[end, iy])
+
+        if hR <= h_eps
+            huR = 0.0
+            hvR = 0.0
+        end
+
+        h[1, iy]    = h1
+        hu[1, iy]   = hu1
+        hv[1, iy]   = hv1
+
+        h[end, iy]  = hR
+        hu[end, iy] = huR
+        hv[end, iy] = hvR
     end
-    return nothing
-end
 
+    # Bottom boundary (iy=1)
+    if iy == 1 && ix <= nx
+        cB = bc_speed_y(h, hv, ix, 1, g) * dt * _dy
+        αB = (cB - 1) / (cB + 1)
 
+        hB  = max(0.0, h[ix, 2]  + αB * (h[ix, 2]  - h[ix, 1]))
+        huB = hu[ix, 2] + αB * (hu[ix, 2] - hu[ix, 1])
+        hvB = hv[ix, 2] + αB * (hv[ix, 2] - hv[ix, 1])
 
-@parallel_indices (ix, iy) function update_height_momentum!(h, hu, hv, F₁, G₁, F₂, F₃, G₂, G₃, dzdx, dzdy, g, dt, _dx, _dy)
-    nx, ny = size(h)
-    if (2 <= ix <= nx-1 && 2 <= iy <= ny-1)
-        hu[ix, iy] -= dt * (dxb(F₂, ix, iy) * _dx + dyb(G₂, ix, iy) * _dy + g * h[ix, iy] * dzdx[ix, iy])
-        hv[ix, iy] -= dt * (dxb(F₃, ix, iy) * _dx + dyb(G₃, ix, iy) * _dy + g * h[ix, iy] * dzdy[ix, iy])
-        h[ix, iy] -= dt * (dxb(F₁, ix, iy) * _dx + dyb(G₁, ix, iy) * _dy)
+        if hB <= h_eps
+            huB = 0.0
+            hvB = 0.0
+        end
+
+        cT = bc_speed_y(h, hv, ix, ny, g) * dt * _dy
+        αT = (cT - 1) / (cT + 1)
+
+        hT  = max(0.0, h[ix, end-1]  + αT * (h[ix, end-1]  - h[ix, end]))
+        huT = hu[ix, end-1] + αT * (hu[ix, end-1] - hu[ix, end])
+        hvT = hv[ix, end-1] + αT * (hv[ix, end-1] - hv[ix, end])
+
+        if hT <= h_eps
+            huT = 0.0
+            hvT = 0.0
+        end
+
+        h[ix, 1]    = hB
+        hu[ix, 1]   = huB
+        hv[ix, 1]   = hvB
+
+        h[ix, end]  = hT
+        hu[ix, end] = huT
+        hv[ix, end] = hvT
     end
-    return nothing
-end
 
-@parallel_indices (iy) function left_bc!(h, hu, hv, g, dt, _dx)
-    cL = (abs(hu[1, iy] / h[1, iy]) + sqrt(g * h[1, iy])) * dt * _dx
-    αL = (cL - 1) / (cL + 1)
+    # Top boundary (iy=ny)
+    if iy == ny && ix <= nx
+        cB = bc_speed_y(h, hv, ix, 1, g) * dt * _dy
+        αB = (cB - 1) / (cB + 1)
 
-    h[1, iy]  = h[2, iy]  + αL * (h[2, iy]  - h[1, iy])
-    hu[1, iy] = hu[2, iy] + αL * (hu[2, iy] - hu[1, iy])
-    hv[1, iy] = hv[2, iy] + αL * (hv[2, iy] - hv[1, iy])
-    return nothing
-end
+        hB  = max(0.0, h[ix, 2]  + αB * (h[ix, 2]  - h[ix, 1]))
+        huB = hu[ix, 2] + αB * (hu[ix, 2] - hu[ix, 1])
+        hvB = hv[ix, 2] + αB * (hv[ix, 2] - hv[ix, 1])
 
-@parallel_indices (iy) function right_bc!(h, hu, hv, g, dt, _dx)
-    cR = (abs(hu[end, iy] / h[end, iy]) + sqrt(g * h[end, iy])) * dt * _dx
-    αR = (cR - 1) / (cR + 1)
+        if hB <= h_eps
+            huB = 0.0
+            hvB = 0.0
+        end
 
-    h[end, iy] = h[end-1, iy]  + αR * (h[end-1, iy]  - h[end, iy])
-    hu[end, iy] = hu[end-1, iy] + αR * (hu[end-1, iy] - hu[end, iy])
-    hv[end, iy] = hv[end-1, iy] + αR * (hv[end-1, iy] - hv[end, iy])
+        cT = bc_speed_y(h, hv, ix, ny, g) * dt * _dy
+        αT = (cT - 1) / (cT + 1)
 
-    return nothing
-end
+        hT  = max(0.0, h[ix, end-1]  + αT * (h[ix, end-1]  - h[ix, end]))
+        huT = hu[ix, end-1] + αT * (hu[ix, end-1] - hu[ix, end])
+        hvT = hv[ix, end-1] + αT * (hv[ix, end-1] - hv[ix, end])
 
-@parallel_indices (ix) function bot_bc!(h, hu, hv, g, dt, _dy)
-    cB = (abs(hv[ix, 1] / h[ix, 1]) + sqrt(g * h[ix, 1])) * dt * _dy
-    αB = (cB - 1) / (cB + 1)
+        if hT <= h_eps
+            huT = 0.0
+            hvT = 0.0
+        end
 
-    h[ix, 1] = h[ix, 2]  + αB * (h[ix, 2]  - h[ix, 1])
-    hu[ix, 1] = hu[ix, 2] + αB * (hu[ix, 2] - hu[ix, 1])
-    hv[ix, 1] = hv[ix, 2] + αB * (hv[ix, 2] - hv[ix, 1])
+        h[ix, 1]    = hB
+        hu[ix, 1]   = huB
+        hv[ix, 1]   = hvB
 
-    return nothing
-end
-
-@parallel_indices (ix) function top_bc!(h, hu, hv, g, dt, _dy)
-    cT = (abs(hv[ix, end] / h[ix, end]) + sqrt(g * h[ix, end])) * dt * _dy
-    αT = (cT - 1) / (cT + 1)
-
-    h[ix, end]  = h[ix, end-1]  + αT * (h[ix, end-1]  - h[ix, end])
-    hu[ix, end] = hu[ix, end-1] + αT * (hu[ix, end-1] - hu[ix, end])
-    hv[ix, end] = hv[ix, end-1] + αT * (hv[ix, end-1] - hv[ix, end])
+        h[ix, end]  = hT
+        hu[ix, end] = huT
+        hv[ix, end] = hvT
+    end
     return nothing
 end
 
@@ -139,8 +510,34 @@ end
     return nothing
 end
 
-@parallel function positivity_fix!(h, hmin)
-    @all(h) = max(@all(h), hmin)
+# @parallel_indices (ix, iy) function dry_cell_fix!(h, hu, hv, h_eps)
+#     nx, ny = size(h)
+
+#     if ix <= nx && iy <= ny
+#         if h[ix, iy] < h_eps
+#             h[ix, iy]  = 0.0
+#             hu[ix, iy] = 0.0
+#             hv[ix, iy] = 0.0
+#         end
+#     end
+
+#     return nothing
+# end
+
+@parallel_indices (ix, iy) function dry_cell_fix!(h, hu, hv, h_eps)
+    nx, ny = size(h)
+
+    if ix <= nx && iy <= ny
+        if !isfinite(h[ix, iy]) || h[ix, iy] <= h_eps
+            h[ix, iy]  = 0.0
+            hu[ix, iy] = 0.0
+            hv[ix, iy] = 0.0
+        elseif !isfinite(hu[ix, iy]) || !isfinite(hv[ix, iy])
+            hu[ix, iy] = 0.0
+            hv[ix, iy] = 0.0
+        end
+    end
+
     return nothing
 end
 
@@ -328,8 +725,8 @@ end
     # physics and numerics
     lx_aoi = 50.0 # aoi = area of interest
     ly_aoi = 50.0
-    nx_aoi = 125
-    ny_aoi = 125
+    nx_aoi = 250
+    ny_aoi = 250
 
     desired_output_resolution_x = 500 # Desired output resolution in x direction (number of points)
     desired_output_resolution_y = 500 # Desired output resolution in y direction (number of points) 
@@ -342,7 +739,7 @@ end
     nx = round(Int, domain_expansion_factor * nx_aoi)
     ny = round(Int, domain_expansion_factor * ny_aoi)
 
-    nt   = Int(2 * nx_aoi)
+    nt   = Int(1 * nx_aoi)
     nvis = 5
 
     dx = lx / (nx - 1)
@@ -398,32 +795,14 @@ end
 
     # z = build_topography(xs, ys; islands=[], background= (xs, ys) -> background_bumps(xs, ys, seed=43))
 
-    # # -------------------------------------------------------------------------
-    # # Thacker's Bowl
-    # # -------------------------------------------------------------------------
-    # h0 = 0.1    # Water depth at center
-    # a  = 10.0   # Distance to zero elevation
-    # B  = 0.05   # Amplitude of the slosh
-    # ω  = sqrt(2 * g * h0) / a # Angular frequency
-
-    # # Parabolic Topography
-    # z = [h0 * ((x^2 + y^2) / a^2) for x in xs, y in ys]
-
-    # # Tilted Planar Free Surface (Initial State at t=0)
-    # η0 = [h0 - h0 * ((x^2 + y^2) / a^2) + B * x for x in xs, y in ys]
-    
-    # # h will naturally go to 0 at the edges of the bowl
-    # hmin  = 1e-6
-    # h .= max.(hmin, η0 .- z)
-
 
     # -------------------------------------------------------------------------
     # Thacker's Bowl with Gaussian Spike
     # -------------------------------------------------------------------------
-    h0 = 0.1    # Water depth at center
-    a  = 10.0   # Distance to zero elevation
-    B  = 0.05   # Amplitude of the slosh
-    ω  = sqrt(2 * g * h0) / a # Angular frequency
+    # h0 = 0.1    # Water depth at center
+    # a  = 10.0   # Distance to zero elevation
+    # B  = 0.05   # Amplitude of the slosh
+    # ω  = sqrt(2 * g * h0) / a # Angular frequency
 
     # Gaussian Spike Parameters
     # A_spike = 0.3   # Amplitude of the drop/spike
@@ -442,19 +821,15 @@ end
 
     z, η0 = load_topography_data(domain_expansion_factor, nx_aoi, ny_aoi)
 
-    hmin  = 1e-6
+    η0 .= 0 # Ensure free surface is never below the bathymetry
+
+    hmin  = 1e-12
     h .= max.(hmin, η0 .- z)
 
-    dzdx = @zeros(nx, ny)
-    dzdy = @zeros(nx, ny)
+    dt_drain = @zeros(nx, ny)
 
-    dzdx[2:end-1, :] .= (z[3:end, :] .- z[1:end-2, :]) .* _2dx
-    dzdx[1, :]       .= dzdx[2, :]
-    dzdx[end, :]     .= dzdx[end-1, :]
-
-    dzdy[:, 2:end-1] .= (z[:, 3:end] .- z[:, 1:end-2]) .* _2dy
-    dzdy[:, 1]       .= dzdy[:, 2]
-    dzdy[:, end]     .= dzdy[:, end-1]
+    dtFx = @zeros(nx - 1, ny)
+    dtGy = @zeros(nx, ny - 1)
 
     # -------------------------------------------------------------------------
     # sponge layer
@@ -601,25 +976,50 @@ end
     # -------------------------------------------------------------------------
 
     for it in 1:nt
-        @parallel compute_maxspeed!(max_speed_x, max_speed_y, h, hu, hv, g)
+        @parallel compute_maxspeed!(max_speed_x, max_speed_y, h, hu, hv, z, g)
 
-        dt = if !USE_GPU
-            dt_multithread(max_speed_x, max_speed_y, _dx, _dy)
-        else
-            0.99 / (maximum(max_speed_x) * _dx + maximum(max_speed_y) * _dy)
+
+        dt =  0.99 / (maximum(max_speed_x) * _dx + maximum(max_speed_y) * _dy)
+
+        if !isfinite(dt)
+            error("Non-finite dt at iteration $it: dt=$dt, max_sx=$(maximum(max_speed_x)), max_sy=$(maximum(max_speed_y))")
         end
 
-        @parallel compute_1st_2nd_and_3th_flux!(F₁, F₂, F₃, G₁, G₂, G₃, hu, hv, h, g, max_speed_x, max_speed_y)
+        @parallel compute_1st_2nd_and_3th_flux!(
+            F₁, F₂, F₃,
+            G₁, G₂, G₃,
+            hu, hv, h, z, g,
+            max_speed_x, max_speed_y
+        )
 
-        @parallel update_height_momentum!(h, hu, hv, F₁, G₁, F₂, F₃, G₂, G₃, dzdx, dzdy, g, dt, _dx, _dy)
+        @parallel compute_draining_timestep!(
+            dt_drain,
+            F₁, G₁,
+            h,
+            dt,
+            _dx, _dy
+        )
 
-        @parallel (1:ny) left_bc!(h, hu, hv, g, dt, _dy)
-        @parallel (1:ny) right_bc!(h, hu, hv, g, dt, _dy)
-        @parallel (1:nx) top_bc!(h, hu, hv, g, dt, _dx)
-        @parallel (1:nx) bot_bc!(h, hu, hv, g, dt, _dx)
+        @parallel compute_effective_flux_timesteps!(
+            dtFx, dtGy,
+            dt_drain,
+            F₁, G₁,
+            dt
+        )
+
+
+        @parallel update_height_momentum!(
+            h, hu, hv,
+            F₁, G₁, F₂, F₃, G₂, G₃, dtFx, dtGy,
+            z, g, dt, _dx, _dy
+        )
+
+        @parallel dry_cell_fix!(h, hu, hv, hmin)
+
+        @parallel all_bc!(h, hu, hv, g, dt, _dx, _dy)
 
         @parallel sponge_layer!(hu, hv, σ)
-        @parallel positivity_fix!(h, hmin)
+        @parallel dry_cell_fix!(h, hu, hv, hmin)
 
         if it % nvis == 0
             if do_viz
@@ -650,35 +1050,42 @@ end
     end
 
     # -------------------------------------------------------------------------
-    # Validation
+    # Steady-state error on wet cells onlyabsorbing boundary conditions for the numerical simulation of waves
     # -------------------------------------------------------------------------
 
-    # Check the boundaries of the ROI
-    # is_preserved = check_bc_preserves_eta(h, z, η0, ix_roi, iy_roi)
-    
-    # Total error inside the ROI 
-    # h_roi = h[ix_roi, iy_roi]
-    # z_roi = z[ix_roi, iy_roi]
-    # max_err_roi = maximum(abs.(η0 .- (h_roi .+ z_roi)))
-    
-    # println("\nValidation Results:")
-    # println("ROI boundaries preserved within tolerance? ", is_preserved)
-    # println("Maximum error across entire ROI: ", max_err_roi)
-    
-    # max_err = maximum(η0.-(h+z))
-    # rel_err = max_err/η0
-    # print("relative error: ", rel_err)
+    η = h .+ z
 
-    # Calculate global errors
-    max_err = maximum(abs.(η0 .- (h .+ z)))
-    max_η0_val = η0 isa AbstractArray ? maximum(abs.(η0)) : abs(η0)
-    rel_err = max_err / max_η0_val
-    println("relative error: ", rel_err)
+    # Compare against the initial free surface η0
+    err = abs.(η .- η0)
+
+    # Wet-cell mask:
+    # use cells that were initially wet and are still meaningfully wet
+    wet_mask = (η0 .- z .> h_eps) .& (h .> h_eps)
+
+    nwet = sum(wet_mask)
+
+    if nwet > 0
+        Linf_abs = maximum(err[wet_mask])
+
+        # A sensible relative L∞ error:
+        # normalize by the largest initial free-surface magnitude on wet cells
+        η0_scale = maximum(abs.(η0[wet_mask]))
+
+        Linf_rel = η0_scale > 0 ? Linf_abs / η0_scale : Linf_abs
+
+        println("wet cells used: ", nwet)
+        println("steady-state L∞ absolute error on wet cells: ", Linf_abs)
+        println("steady-state L∞ relative error on wet cells: ", Linf_rel)
+    else
+        println("No wet cells found for steady-state error evaluation.")
+        Linf_abs = NaN
+        Linf_rel = NaN
+    end
 
     if do_viz
         println("\nSaved $(frame_id[]) frames to: $(abspath(outdir))")
     end
-    return nothing
+    return Linf_abs
 end
 
-swe2d_topography_frames()
+swe2d_topography_frames(; outdir = "frames", do_viz = false, force_array_output=false)
