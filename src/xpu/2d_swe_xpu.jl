@@ -613,10 +613,10 @@ end
 
         @parallel update_height_momentum!(h, hu, hv, F₁, G₁, F₂, F₃, G₂, G₃, dzdx, dzdy, g, dt, _dx, _dy)
 
-        @parallel left_bc!(h, hu, hv, g, dt, _dy)
-        @parallel right_bc!(h, hu, hv, g, dt, _dy)
-        @parallel top_bc!(h, hu, hv, g, dt, _dx)
-        @parallel bot_bc!(h, hu, hv, g, dt, _dx)
+        @parallel (1:ny) left_bc!(h, hu, hv, g, dt, _dy)
+        @parallel (1:ny) right_bc!(h, hu, hv, g, dt, _dy)
+        @parallel (1:nx) top_bc!(h, hu, hv, g, dt, _dx)
+        @parallel (1:nx) bot_bc!(h, hu, hv, g, dt, _dx)
 
         @parallel sponge_layer!(hu, hv, σ)
         @parallel positivity_fix!(h, hmin)
