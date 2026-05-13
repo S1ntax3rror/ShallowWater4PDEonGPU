@@ -37,18 +37,10 @@ using Printf
 
 const g = 1.0
 
-@views function dt_multithread(max_speed_x, max_speed_y, _dx, _dy, n)
-    nthreads = Threads.nthreads()
-    max_speeds_x = zeros(nthreads)
-    max_speeds_y = zeros(nthreads)
-
-    Threads.@threads for i in 1:n
-        tid = Threads.threadid()
-        max_speeds_x[tid] = max(max_speeds_x[tid], maximum(max_speed_x[:, i]))
-        max_speeds_y[tid] = max(max_speeds_y[tid], maximum(max_speed_y[i, :]))
-    end
-
-    return 0.99 / (maximum(max_speeds_x) * _dx + maximum(max_speeds_y) * _dy)
+@views function dt_multithread(max_speed_x, max_speed_y, _dx, _dy)
+    max_x = maximum(max_speed_x)
+    max_y = maximum(max_speed_y)
+    return 0.99 / (max_x * _dx + max_y * _dy)
 end
 
 # -----------------------------------------------------------------------------
@@ -92,12 +84,9 @@ end
 @parallel_indices (ix, iy) function update_height_momentum!(h, hu, hv, F₁, G₁, F₂, F₃, G₂, G₃, dzdx, dzdy, g, dt, _dx, _dy)
     nx, ny = size(h)
     if (2 <= ix <= nx-1 && 2 <= iy <= ny-1)
-        h[ix, iy] -= dt * (dxb(F₁, ix, iy) * _dx + dyb(G₁, ix, iy) * _dy)
-    end
-
-    if (2 <= ix <= nx-1 && 2 <= iy <= ny-1)
         hu[ix, iy] -= dt * (dxb(F₂, ix, iy) * _dx + dyb(G₂, ix, iy) * _dy + g * h[ix, iy] * dzdx[ix, iy])
         hv[ix, iy] -= dt * (dxb(F₃, ix, iy) * _dx + dyb(G₃, ix, iy) * _dy + g * h[ix, iy] * dzdy[ix, iy])
+        h[ix, iy] -= dt * (dxb(F₁, ix, iy) * _dx + dyb(G₁, ix, iy) * _dy)
     end
     return nothing
 end
@@ -676,7 +665,7 @@ end
         @parallel compute_maxspeed!(max_speed_x, max_speed_y, h, hu, hv, g)
 
         dt = if !USE_GPU
-            dt_multithread(max_speed_x, max_speed_y, _dx, _dy, ny)
+            dt_multithread(max_speed_x, max_speed_y, _dx, _dy)
         else
             0.99 / (maximum(max_speed_x) * _dx + maximum(max_speed_y) * _dy)
         end
