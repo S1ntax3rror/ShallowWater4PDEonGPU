@@ -91,109 +91,45 @@ end
     return nothing
 end
 
+@parallel_indices (iy) function left_bc!(h, hu, hv, g, dt, _dx)
+    cL = (abs(hu[1, iy] / h[1, iy]) + sqrt(g * h[1, iy])) * dt * _dx
+    αL = (cL - 1) / (cL + 1)
 
-@parallel_indices (ix, iy) function all_bc!(h, hu, hv, g, dt, _dx, _dy)
-    nx, ny = size(h)
+    h[1, iy]  = h[2, iy]  + αL * (h[2, iy]  - h[1, iy])
+    hu[1, iy] = hu[2, iy] + αL * (hu[2, iy] - hu[1, iy])
+    hv[1, iy] = hv[2, iy] + αL * (hv[2, iy] - hv[1, iy])
+    return nothing
+end
 
-    # Left boundary (ix=1)
-    if ix == 1 && iy <= ny
-        cL = (abs(hu[1, iy] / h[1, iy]) + sqrt(g * h[1, iy])) * dt * _dx
-        αL = (cL - 1) / (cL + 1)
+@parallel_indices (iy) function right_bc!(h, hu, hv, g, dt, _dx)
+    cR = (abs(hu[end, iy] / h[end, iy]) + sqrt(g * h[end, iy])) * dt * _dx
+    αR = (cR - 1) / (cR + 1)
 
-        h1  = h[2, iy]  + αL * (h[2, iy]  - h[1, iy])
-        hu1 = hu[2, iy] + αL * (hu[2, iy] - hu[1, iy])
-        hv1 = hv[2, iy] + αL * (hv[2, iy] - hv[1, iy])
+    h[end, iy] = h[end-1, iy]  + αR * (h[end-1, iy]  - h[end, iy])
+    hu[end, iy] = hu[end-1, iy] + αR * (hu[end-1, iy] - hu[end, iy])
+    hv[end, iy] = hv[end-1, iy] + αR * (hv[end-1, iy] - hv[end, iy])
 
-        cR = (abs(hu[end, iy] / h[end, iy]) + sqrt(g * h[end, iy])) * dt * _dx
-        αR = (cR - 1) / (cR + 1)
+    return nothing
+end
 
-        hR  = h[end-1, iy]  + αR * (h[end-1, iy]  - h[end, iy])
-        huR = hu[end-1, iy] + αR * (hu[end-1, iy] - hu[end, iy])
-        hvR = hv[end-1, iy] + αR * (hv[end-1, iy] - hv[end, iy])
+@parallel_indices (ix) function bot_bc!(h, hu, hv, g, dt, _dy)
+    cB = (abs(hv[ix, 1] / h[ix, 1]) + sqrt(g * h[ix, 1])) * dt * _dy
+    αB = (cB - 1) / (cB + 1)
 
-        h[1, iy]    = h1
-        hu[1, iy]   = hu1
-        hv[1, iy]   = hv1
+    h[ix, 1] = h[ix, 2]  + αB * (h[ix, 2]  - h[ix, 1])
+    hu[ix, 1] = hu[ix, 2] + αB * (hu[ix, 2] - hu[ix, 1])
+    hv[ix, 1] = hv[ix, 2] + αB * (hv[ix, 2] - hv[ix, 1])
 
-        h[end, iy]  = hR
-        hu[end, iy] = huR
-        hv[end, iy] = hvR
-    end
+    return nothing
+end
 
-    # Right boundary (ix=nx)
-    if ix == nx && iy <= ny
-        cL = (abs(hu[1, iy] / h[1, iy]) + sqrt(g * h[1, iy])) * dt * _dx
-        αL = (cL - 1) / (cL + 1)
+@parallel_indices (ix) function top_bc!(h, hu, hv, g, dt, _dy)
+    cT = (abs(hv[ix, end] / h[ix, end]) + sqrt(g * h[ix, end])) * dt * _dy
+    αT = (cT - 1) / (cT + 1)
 
-        h1  = h[2, iy]  + αL * (h[2, iy]  - h[1, iy])
-        hu1 = hu[2, iy] + αL * (hu[2, iy] - hu[1, iy])
-        hv1 = hv[2, iy] + αL * (hv[2, iy] - hv[1, iy])
-
-        cR = (abs(hu[end, iy] / h[end, iy]) + sqrt(g * h[end, iy])) * dt * _dx
-        αR = (cR - 1) / (cR + 1)
-
-        hR  = h[end-1, iy]  + αR * (h[end-1, iy]  - h[end, iy])
-        huR = hu[end-1, iy] + αR * (hu[end-1, iy] - hu[end, iy])
-        hvR = hv[end-1, iy] + αR * (hv[end-1, iy] - hv[end, iy])
-
-        h[1, iy]    = h1
-        hu[1, iy]   = hu1
-        hv[1, iy]   = hv1
-
-        h[end, iy]  = hR
-        hu[end, iy] = huR
-        hv[end, iy] = hvR
-    end
-
-    # Bottom boundary (iy=1)
-    if iy == 1 && ix <= nx
-        cB = (abs(hv[ix, 1] / h[ix, 1]) + sqrt(g * h[ix, 1])) * dt * _dy
-        αB = (cB - 1) / (cB + 1)
-
-        hB  = h[ix, 2]  + αB * (h[ix, 2]  - h[ix, 1])
-        huB = hu[ix, 2] + αB * (hu[ix, 2] - hu[ix, 1])
-        hvB = hv[ix, 2] + αB * (hv[ix, 2] - hv[ix, 1])
-
-        cT = (abs(hv[ix, end] / h[ix, end]) + sqrt(g * h[ix, end])) * dt * _dy
-        αT = (cT - 1) / (cT + 1)
-
-        hT  = h[ix, end-1]  + αT * (h[ix, end-1]  - h[ix, end])
-        huT = hu[ix, end-1] + αT * (hu[ix, end-1] - hu[ix, end])
-        hvT = hv[ix, end-1] + αT * (hv[ix, end-1] - hv[ix, end])
-
-        h[ix, 1]    = hB
-        hu[ix, 1]   = huB
-        hv[ix, 1]   = hvB
-
-        h[ix, end]  = hT
-        hu[ix, end] = huT
-        hv[ix, end] = hvT
-    end
-
-    # Top boundary (iy=ny)
-    if iy == ny && ix <= nx
-        cB = (abs(hv[ix, 1] / h[ix, 1]) + sqrt(g * h[ix, 1])) * dt * _dy
-        αB = (cB - 1) / (cB + 1)
-
-        hB  = h[ix, 2]  + αB * (h[ix, 2]  - h[ix, 1])
-        huB = hu[ix, 2] + αB * (hu[ix, 2] - hu[ix, 1])
-        hvB = hv[ix, 2] + αB * (hv[ix, 2] - hv[ix, 1])
-
-        cT = (abs(hv[ix, end] / h[ix, end]) + sqrt(g * h[ix, end])) * dt * _dy
-        αT = (cT - 1) / (cT + 1)
-
-        hT  = h[ix, end-1]  + αT * (h[ix, end-1]  - h[ix, end])
-        huT = hu[ix, end-1] + αT * (hu[ix, end-1] - hu[ix, end])
-        hvT = hv[ix, end-1] + αT * (hv[ix, end-1] - hv[ix, end])
-
-        h[ix, 1]    = hB
-        hu[ix, 1]   = huB
-        hv[ix, 1]   = hvB
-
-        h[ix, end]  = hT
-        hu[ix, end] = huT
-        hv[ix, end] = hvT
-    end
+    h[ix, end]  = h[ix, end-1]  + αT * (h[ix, end-1]  - h[ix, end])
+    hu[ix, end] = hu[ix, end-1] + αT * (hu[ix, end-1] - hu[ix, end])
+    hv[ix, end] = hv[ix, end-1] + αT * (hv[ix, end-1] - hv[ix, end])
     return nothing
 end
 
@@ -677,7 +613,10 @@ end
 
         @parallel update_height_momentum!(h, hu, hv, F₁, G₁, F₂, F₃, G₂, G₃, dzdx, dzdy, g, dt, _dx, _dy)
 
-        @parallel all_bc!(h, hu, hv, g, dt, _dx, _dy)
+        @parallel left_bc!(h, hu, hv, g, dt, _dy)
+        @parallel right_bc!(h, hu, hv, g, dt, _dy)
+        @parallel top_bc!(h, hu, hv, g, dt, _dx)
+        @parallel bot_bc!(h, hu, hv, g, dt, _dx)
 
         @parallel sponge_layer!(hu, hv, σ)
         @parallel positivity_fix!(h, hmin)
