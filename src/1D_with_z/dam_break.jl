@@ -258,8 +258,8 @@ f(S) = SA[S[2], S[2]^2 / S[1] + 0.5 * g * S[1]^2]
         h_error[i] = abs(S[i][1] - h_ex[i])
         hu_error[i] = abs(S[i][2] - hu_ex[i])
     end
-    total_h_error = sum(h_error)*dx 
-    total_hu_error = sum(hu_error)*dx
+    total_h_error = maximum(h_error)
+    total_hu_error = maximum(hu_error)
     @printf("Total h error at final time: %.6f\n", total_h_error)
     @printf("Total hu error at final time: %.6f\n", total_hu_error)
 
