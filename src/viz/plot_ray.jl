@@ -34,7 +34,7 @@ const STRIDE = 1
 # Vertical visual scale:
 # Increase if the water/terrain appears too flat.
 # This scales both terrain and water in the rendered scene.
-const HEIGHT_SCALE = 0.50f0
+const HEIGHT_SCALE = 0.35f0
 
 
 # =======================================================
@@ -64,8 +64,6 @@ const TERRAIN_MID1 = RGBf(0.72, 0.52, 0.30)
 const TERRAIN_MID2 = RGBf(0.90, 0.74, 0.48)
 const TERRAIN_HIGH = RGBf(1.00, 0.96, 0.82)
 
-
-
 # =======================================================
 # 5. WATER TRANSPARENCY AND HIGHLIGHT KNOBS
 # =======================================================
@@ -78,8 +76,8 @@ WATER_ALPHA_DEEP    = 0.75f0
 
 # Subtle slope-based highlight.
 # Increase if you want the water surface to shimmer more.
-const WATER_HIGHLIGHT_GAIN = 0.28f0
-const WATER_HIGHLIGHT_MAX  = 0.12f0
+const WATER_HIGHLIGHT_GAIN = 0.12f0
+const WATER_HIGHLIGHT_MAX  = 0.05f0
 
 
 # =======================================================
@@ -102,13 +100,13 @@ const WATER_ABSORB_B = 0.05129f0
 const WATER_DEPTH_ABSORB_SCALE = 36.0f0
 
 # Reflected sky colors
-const SKY_HORIZON = RGBf(0.97, 0.99, 1.00)
-const SKY_ZENITH  = RGBf(0.72, 0.86, 1.00)
+const SKY_HORIZON = RGBf(0.82, 0.90, 1.00)
+const SKY_ZENITH  = RGBf(0.45, 0.66, 0.95)
 
 # Fake specular sun highlight
 const SUN_DIRECTION = (0.35f0, 0.25f0, 0.90f0)
-const SUN_GLINT_STRENGTH = 0.30f0
-const SUN_GLINT_SHININESS = 45f0
+const SUN_GLINT_STRENGTH = 0.16f0
+const SUN_GLINT_SHININESS = 100f0
 
 # Approximate viewing direction for Fresnel reflection.
 # Tune this only if the reflected look becomes visually strange.
@@ -395,9 +393,9 @@ function make_water_colors(
         fresnel = schlick_fresnel(cosθ)
 
         fresnel_visual = clamp(
-            0.16f0 + 5.2f0 * fresnel,
+            0.10f0 + 4.5f0 * fresnel,
             0f0,
-            0.95f0,
+            0.85f0,
         )
 
         sky_mix = clamp(n[3], 0f0, 1f0)
