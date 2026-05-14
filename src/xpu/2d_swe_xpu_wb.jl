@@ -26,6 +26,7 @@ end
 using Printf
 
 const h_eps = 1e-2
+const nt_nx_multiplier = 5
 
 @inline avx_comp(hv1, hv2, h, ix, iy) = 0.5 * (hv1[ix, iy] * hv2[ix, iy] / h[ix, iy] + hv1[ix+1, iy] * hv2[ix+1, iy] / h[ix+1, iy])
 @inline avy_comp(hv1, hv2, h, ix, iy) = 0.5 * (hv1[ix, iy] * hv2[ix, iy] / h[ix, iy] + hv1[ix, iy+1] * hv2[ix, iy+1] / h[ix, iy+1])
@@ -385,42 +386,14 @@ end
             hv1 = 0.0
         end
 
-        cR = bc_speed_x(h, hu, nx, iy, g) * dt * _dx
-        αR = (cR - 1) / (cR + 1)
-
-        hR  = max(0.0, h[end-1, iy]  + αR * (h[end-1, iy]  - h[end, iy]))
-        huR = hu[end-1, iy] + αR * (hu[end-1, iy] - hu[end, iy])
-        hvR = hv[end-1, iy] + αR * (hv[end-1, iy] - hv[end, iy])
-
-        if hR <= h_eps
-            huR = 0.0
-            hvR = 0.0
-        end
-
         h[1, iy]    = h1
         hu[1, iy]   = hu1
         hv[1, iy]   = hv1
-
-        h[end, iy]  = hR
-        hu[end, iy] = huR
-        hv[end, iy] = hvR
     end
 
     # Right boundary (ix=nx)
     if ix == nx && iy <= ny
-        cL = bc_speed_x(h, hu, 1, iy, g) * dt * _dx
-        αL = (cL - 1) / (cL + 1)
-
-        h1  = max(0.0, h[2, iy] + αL * (h[2, iy] - h[1, iy]))
-        hu1 = hu[2, iy] + αL * (hu[2, iy] - hu[1, iy])
-        hv1 = hv[2, iy] + αL * (hv[2, iy] - hv[1, iy])
-
-        if h1 <= h_eps
-            hu1 = 0.0
-            hv1 = 0.0
-        end
     
-
         cR = bc_speed_x(h, hu, nx, iy, g) * dt * _dx
         αR = (cR - 1) / (cR + 1)
 
@@ -432,10 +405,6 @@ end
             huR = 0.0
             hvR = 0.0
         end
-
-        h[1, iy]    = h1
-        hu[1, iy]   = hu1
-        hv[1, iy]   = hv1
 
         h[end, iy]  = hR
         hu[end, iy] = huR
@@ -456,40 +425,14 @@ end
             hvB = 0.0
         end
 
-        cT = bc_speed_y(h, hv, ix, ny, g) * dt * _dy
-        αT = (cT - 1) / (cT + 1)
-
-        hT  = max(0.0, h[ix, end-1]  + αT * (h[ix, end-1]  - h[ix, end]))
-        huT = hu[ix, end-1] + αT * (hu[ix, end-1] - hu[ix, end])
-        hvT = hv[ix, end-1] + αT * (hv[ix, end-1] - hv[ix, end])
-
-        if hT <= h_eps
-            huT = 0.0
-            hvT = 0.0
-        end
-
         h[ix, 1]    = hB
         hu[ix, 1]   = huB
         hv[ix, 1]   = hvB
 
-        h[ix, end]  = hT
-        hu[ix, end] = huT
-        hv[ix, end] = hvT
     end
 
     # Top boundary (iy=ny)
     if iy == ny && ix <= nx
-        cB = bc_speed_y(h, hv, ix, 1, g) * dt * _dy
-        αB = (cB - 1) / (cB + 1)
-
-        hB  = max(0.0, h[ix, 2]  + αB * (h[ix, 2]  - h[ix, 1]))
-        huB = hu[ix, 2] + αB * (hu[ix, 2] - hu[ix, 1])
-        hvB = hv[ix, 2] + αB * (hv[ix, 2] - hv[ix, 1])
-
-        if hB <= h_eps
-            huB = 0.0
-            hvB = 0.0
-        end
 
         cT = bc_speed_y(h, hv, ix, ny, g) * dt * _dy
         αT = (cT - 1) / (cT + 1)
@@ -502,10 +445,6 @@ end
             huT = 0.0
             hvT = 0.0
         end
-
-        h[ix, 1]    = hB
-        hu[ix, 1]   = huB
-        hv[ix, 1]   = hvB
 
         h[ix, end]  = hT
         hu[ix, end] = huT
@@ -731,12 +670,12 @@ end
 # Main
 # -----------------------------------------------------------------------------
 
-@views function swe2d_topography_frames(; outdir = "frames", do_viz = true, force_array_output=false)
+@views function swe2d_topography_frames(nx_aoi, ny_aoi; outdir = "frames", do_viz = true, force_array_output=false)
     # physics and numerics
     lx_aoi = 50.0 # aoi = area of interest
     ly_aoi = 50.0
-    nx_aoi = 250
-    ny_aoi = 250
+    #nx_aoi = 250
+    #ny_aoi = 250
 
     desired_output_resolution_x = 500 # Desired output resolution in x direction (number of points)
     desired_output_resolution_y = 500 # Desired output resolution in y direction (number of points) 
@@ -749,7 +688,7 @@ end
     nx = round(Int, domain_expansion_factor * nx_aoi)
     ny = round(Int, domain_expansion_factor * ny_aoi)
 
-    nt   = Int(5 * nx_aoi)
+    nt   = Int(nt_nx_multiplier * nx_aoi)
     nvis = 5
 
     dx = lx / (nx - 1)
@@ -769,8 +708,12 @@ end
     pad_x = round(Int, (nx - nx_aoi) / 2)
     pad_y = round(Int, (ny - ny_aoi) / 2)
 
-    ix_roi = (pad_x + 1):(pad_x + nx_aoi)
-    iy_roi = (pad_y + 1):(pad_y + ny_aoi)
+    ix_roi = 1:nx
+    iy_roi = 1:ny
+
+
+    # ix_roi = (pad_x + 1):(pad_x + nx_aoi)
+    # iy_roi = (pad_y + 1):(pad_y + ny_aoi)
 
     xs_roi = xs[ix_roi]
     ys_roi = ys[iy_roi]
@@ -829,11 +772,16 @@ end
     # η0 = [h0 - h0 * ((x^2 + y^2) / a^2) + B * x + 
     #       A_spike * exp(-((x - x_c)^2 + (y - y_c)^2) / (2 * σ_spike^2)) 
     #       for x in xs, y in ys]
+
+    #-------------------------------------------------------------------------
+    # Initial condition from real topography + wave data
+    #-------------------------------------------------------------------------
     
 
     z, η0 = load_topography_data(domain_expansion_factor, nx_aoi, ny_aoi)
 
-    η0 .= 0 # Ensure free surface is never below the bathymetry
+    # wet/dry sea level steady state
+    η0 .= 0
 
     # add a gaussian bump to the initial condition to generate some wave activity
     x_c     = -10.0    # X center of the spike
@@ -848,7 +796,7 @@ end
 
 
     hmin  = 1e-2
-    h .= η0 .- z
+    h .= max.(0.0, η0 .- z)
 
     dt_drain = @zeros(nx, ny)
 
@@ -1117,4 +1065,28 @@ end
     return Linf_abs
 end
 
-swe2d_topography_frames()
+swe2d_topography_frames(250, 250;
+    outdir = "docs/frames/frames_topography",
+    do_viz = true,
+    force_array_output = false
+)
+
+# # error benchmark
+
+# resolutions = [25, 50, 125, 250, 500]
+# errors = Float64[]
+
+# for res in resolutions
+#     println("\nRunning simulation at resolution: $res x $res")
+#     err = swe2d_topography_frames(res, res; outdir = "frames_topography_$(res)x$(res)", do_viz = false)
+#     push!(errors, err)
+# end
+
+# # Plot errors
+# using Plots
+
+# Plots.plot(resolutions, errors, marker=:o, xscale=:log10, yscale=:log10,
+#     xlabel="Resolution (nx = ny)", ylabel="Steady-state L∞ Error",
+#     title="Error vs Resolution for Swe2D fully-wet topography test case",
+#     legend=false)
+# savefig("docs/error_convergence_full_wet.png")
