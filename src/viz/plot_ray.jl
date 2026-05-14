@@ -159,13 +159,21 @@ function sorted_frame_paths(dir::AbstractString)
     return sort(files)
 end
 
-function read_frame(path::AbstractString)
+function read_frame_topo(path::AbstractString)
     data = deserialize(path)
 
     h = data.h
     z = data.z
 
     return h, z
+end
+
+function read_frame(path::AbstractString)
+    data = deserialize(path)
+
+    h = data.h
+
+    return h
 end
 
 
@@ -515,10 +523,14 @@ function render_frames()
     end
 
     @info "Found $(length(paths)) frames"
-
+    z = nothing
     for (i, path) in enumerate(paths)
-        h, z = read_frame(path)
-
+        if i == 1
+            h, z_i = read_frame_topo(path)
+            z = z_i
+        else
+            h = read_frame(path)
+        end
         @info "Plotting $(basename(path))" frame=i size_h=size(h) size_z=size(z)
 
         fig = make_scene(h, z; title="SWE frame $(i)")
