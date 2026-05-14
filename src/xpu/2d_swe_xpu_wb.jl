@@ -658,13 +658,11 @@ function load_topography_data(domain_expansion_factor, nx_aoi_ext, ny_aoi_ext)
     return z, η0
 end
 
-
-
 # -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
 
-@views function swe2d_topography_frames(nx_aoi, ny_aoi; outdir = "frames", do_viz = true, force_array_output=false, debug_roi=false)
+@views function swe2d_topography_frames(nx_aoi, ny_aoi; outdir = "frames", do_viz = true, force_array_output = false, debug_roi=false)
     # physics and numerics
     lx_aoi = 50.0 # aoi = area of interest
     ly_aoi = 50.0
@@ -781,7 +779,6 @@ end
     #     y = ys[j]
     #     η0[i, j] += A_spike * exp(-((x - x_c)^2 + (y - y_c)^2) / (2 * σ_spike^2))
     # end
-
 
     hmin  = 1e-2
     h .= max.(0.0, η0 .- z)
@@ -918,7 +915,6 @@ end
                 save(fname, fig)
             end
             save_frame!()
-
         else
             frame_id = Ref(0)
             @info "Saving arrays to $outdir"
@@ -946,7 +942,6 @@ end
 
     for it in 1:nt
         @parallel compute_maxspeed!(max_speed_x, max_speed_y, h, hu, hv, z, g, vel_eps)
-
 
         dt =  0.99 / (maximum(max_speed_x) * _dx + maximum(max_speed_y) * _dy)
         time += dt
@@ -976,7 +971,6 @@ end
             F₁, G₁,
             dt
         )
-
 
         @parallel update_height_momentum!(
             h, hu, hv,
@@ -1012,7 +1006,6 @@ end
                     save_array!()
                 end
             end
-
         end
 
         percent = 100 * it / nt

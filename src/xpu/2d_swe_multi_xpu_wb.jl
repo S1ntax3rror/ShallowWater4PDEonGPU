@@ -87,13 +87,6 @@ const g = 1.0
 min_g(A) = (min_l = minimum(A); MPI.Allreduce(min_l, MPI.MIN, MPI.COMM_WORLD))
 max_g(A) = (max_l = maximum(A); MPI.Allreduce(max_l, MPI.MAX, MPI.COMM_WORLD))
 
-@views function dt_multithread(max_speed_x, max_speed_y, _dx, _dy)
-    max_x = maximum(max_speed_x)
-    max_y = maximum(max_speed_y)
-
-    return 0.99 / (max_x * _dx + max_y * _dy)
-end
-
 # -----------------------------------------------------------------------------
 # Kernels
 # -----------------------------------------------------------------------------
@@ -369,7 +362,6 @@ end
     return nothing
 end
 
-
 @parallel_indices (iy) function left_right_bc!(h, hu, hv, g, dt, _dx)
     nx, ny = size(h)
 
@@ -452,11 +444,6 @@ end
     return nothing
 end
 
-@parallel function positivity_fix!(h, hmin)
-    @all(h) = max(@all(h), hmin)
-    return nothing
-end
-
 @parallel_indices (ix, iy) function dry_cell_fix!(h, hu, hv, h_eps)
     nx, ny = size(h)
 
@@ -473,7 +460,6 @@ end
 
     return nothing
 end
-
 
 function check_bc_preserves_eta(h, z, η0, ix_roi, iy_roi; tol=1e-8)
     """ Check if BC (eta = h + z) = eta0 """
@@ -638,7 +624,10 @@ function load_topography_data(domain_expansion_factor, nx_aoi_ext, ny_aoi_ext)
             in_roi = (1 <= i - pad_x <= nx_aoi_ext) && (1 <= j - pad_y <= ny_aoi_ext)
             
             # If in ROI, load the wave. If in padding, use resting sea level (0.0)
-            η0_expanded[i, j] = in_roi ? η0_inner[i - pad_x, j - pad_y] : 0.0
+            # η0_expanded[i, j] = in_roi ? η0_inner[i - pad_x, j - pad_y] : 0.0
+
+            # Alternatively, stretch the wave data outwards -> Huge watermass just like in a tsunami scenario
+            η0_expanded[i, j] = η0_inner[orig_i, orig_j]        
         end
     end
 
@@ -648,16 +637,15 @@ function load_topography_data(domain_expansion_factor, nx_aoi_ext, ny_aoi_ext)
 
     return z, η0
 end
+
 # -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
 
-@views function swe2d_topography_frames(; outdir = "frames", do_viz = true, force_array_output = false)
+@views function swe2d_topography_frames(nx_aoi, ny_aoi; outdir = "frames", do_viz = true, force_array_output = false, debug_roi=false)
     # physics and numerics
     lx_aoi = 50.0 # aoi = area of interest
     ly_aoi = 50.0
-    nx_aoi = 100
-    ny_aoi = 100
 
     # Multiply domain size to allow for sponge layer and BCs
     domain_expansion_factor = 3
@@ -673,7 +661,7 @@ end
     
     b_width     = (8, 8, 1)
 
-    nt   = Int(2 * nx_aoi)
+    nt   = Int(nt_nx_multiplier * nx_aoi)
     nvis = 5
 
     dx = lx / (nx_g() - 1)
@@ -683,21 +671,29 @@ end
 
     _dx  = 1.0 / dx
     _dy  = 1.0 / dy
-    _2dx = 1.0 / (2 * dx)
-    _2dy = 1.0 / (2 * dy)
+
+    xs = [x_g(ix, dx, h) - lx / 2 for ix in 1:nx]
+    ys = [y_g(iy, dy, h) - ly / 2 for iy in 1:ny]
+
+    # ROI indices for visualization
+    pad_x = round(Int, (nx_g() - nx_aoi) / 2)
+    pad_y = round(Int, (ny_g() - ny_aoi) / 2)
+
+    if debug_roi
+    ix_roi = 1:nx_g()
+    iy_roi = 1:ny_g()
+    else
+        ix_roi = (pad_x + 1):(pad_x + nx_aoi)
+        iy_roi = (pad_y + 1):(pad_y + ny_aoi)
+    end
+
+    xs_roi = xs[ix_roi]
+    ys_roi = ys[iy_roi]
     
     # state
     h  = @zeros(nx, ny)
     hu = @zeros(nx, ny)
     hv = @zeros(nx, ny)
-
-    # old state for BC check
-    h_old  = @zeros(nx, ny)
-    hu_old = @zeros(nx, ny)
-    hv_old = @zeros(nx, ny)
-
-    xs = [x_g(ix, dx, h) - lx / 2 for ix in 1:nx]
-    ys = [y_g(iy, dy, h) - ly / 2 for iy in 1:ny]
 
     # fluxes
     F₁ = @zeros(nx - 1, ny)
@@ -726,21 +722,22 @@ end
 
     z, η0 = load_topography_data(domain_expansion_factor, nx_aoi, ny_aoi)
 
-    η0 .= 0 # Ensure free surface is never below the bathymetry
+    # wet/dry sea level steady state
+    # η0 .= 0
 
-    # add a gaussian bump to the initial condition to generate some wave activity
-    x_c     = -10.0    # X center of the spike
-    y_c     = -20.0    # Y center of the spike
-    σ_spike = 2.5    # Width of the spike (standard deviation)
-    A_spike = 30.0    # Amplitude of the drop/spike
-    for i in eachindex(xs), j in eachindex(ys)
-        x = xs[i]
-        y = ys[j]
-        η0[i, j] += A_spike * exp(-((x - x_c)^2 + (y - y_c)^2) / (2 * σ_spike^2))
-    end
+    # # add a gaussian bump to the initial condition to generate some wave activity
+    # x_c     = -10.0    # X center of the spike
+    # y_c     = -20.0    # Y center of the spike
+    # σ_spike = 2.5    # Width of the spike (standard deviation)
+    # A_spike = 30.0    # Amplitude of the drop/spike
+    # for i in eachindex(xs), j in eachindex(ys)
+    #     x = xs[i]
+    #     y = ys[j]
+    #     η0[i, j] += A_spike * exp(-((x - x_c)^2 + (y - y_c)^2) / (2 * σ_spike^2))
+    # end
 
     hmin  = 1e-2
-    h .= η0 .- z
+    h .= max.(0.0, η0 .- z)
 
     dt_drain = @zeros(nx, ny)
 
@@ -777,6 +774,8 @@ end
     # # -------------------------------------------------------------------------
     # # initial condition
     # # -------------------------------------------------------------------------
+    
+    time = 0.0
 
     # h_in  = 0.20
     # h_out = 0.10
@@ -793,6 +792,7 @@ end
 
     if do_viz
         use_makie = HAS_MAKIE && !force_array_output
+        print("Using visualization: ", use_makie ? "Makie" : "Array output")
         mkpath(outdir)
 
         vertical_exaggeration = 6.0
@@ -813,7 +813,6 @@ end
         ix_roi_v = (pad_x_v + 1):(pad_x_v + nx_aoi_v)
         iy_roi_v = (pad_y_v + 1):(pad_y_v + ny_aoi_v)
         
-
         xs_v = LinRange(-lx / 2 + dx, lx / 2 - dx, nx_v)
         ys_v = LinRange(-ly / 2 + dy, ly / 2 - dy, ny_v)
         xs_roi_v = xs_v[ix_roi_v]
@@ -864,7 +863,7 @@ end
                 water = surface!(ax, xs_roi_v, ys_roi_v, η_water_plot;
                     color = η_water_color,
                     colormap = :turbo,
-                    colorrange = (0.05, 0.15),
+                    colorrange = (-10, 20),
                     shading = true
                 )
 
@@ -878,7 +877,6 @@ end
                     fname = joinpath(outdir, @sprintf("frame_%06d.png", frame_id[]))
                     save(fname, fig)
                 end
-
                 save_frame!()
             else
                 frame_id = Ref(0)
@@ -888,9 +886,16 @@ end
                     # Save as a standard Julia serialized file
                     fname = joinpath(outdir, @sprintf("array_frame_%06d.jls", frame_id[]))
                     # Storing a NamedTuple containing the ROI arrays
-                    serialize(fname, (h=convert.(Float32, h_slice), z=convert.(Float32, z_slice)))
+                    serialize(fname, (h=Array(convert.(Float32, h_slice)),)) 
                 end
-                save_array!()
+                function save_array_with_z!()
+                    frame_id[] += 1
+                    # Save as a standard Julia serialized file
+                    fname = joinpath(outdir, @sprintf("array_frame_%06d.jls", frame_id[]))
+                    # Storing a NamedTuple containing the ROI arrays
+                    serialize(fname, (h=Array(convert.(Float32, h_slice)), z=Array(convert.(Float32, z_slice))))
+                end
+                save_array_with_z!()
             end
         end
     end
@@ -904,10 +909,10 @@ end
 
         dt =  0.99 / (maximum(max_speed_x) * _dx + maximum(max_speed_y) * _dy)
         time += dt
-        
-        h_old  .= h
-        hu_old .= hu
-        hv_old .= hv
+
+        if !isfinite(dt)
+            error("Non-finite dt at iteration $it: dt=$dt, max_sx=$(maximum(max_speed_x)), max_sy=$(maximum(max_speed_y))")
+        end
 
         @parallel compute_1st_2nd_and_3th_flux!(
             F₁, F₂, F₃,
@@ -939,14 +944,11 @@ end
             )           
             update_halo!(h, hu, hv)
         end
-        
-        
-        @parallel sponge_layer!(hu, hv, σ)
-        @parallel positivity_fix!(h, hmin)
 
         @parallel dry_cell_fix!(h, hu, hv, hmin)
 
-        @prallel left_right_bc!(h, hu, hv, g, dt, _dx)
+        #TODO apply BC only at global boundaries
+        @parallel left_right_bc!(h, hu, hv, g, dt, _dx)
         @parallel bottom_top_bc!(h, hu, hv, g, dt, _dy)
 
         @parallel sponge_layer!(hu, hv, σ)
@@ -1024,9 +1026,13 @@ end
             println("\nSaved $(frame_id[]) frames to: $(abspath(outdir))")
         end
     end
-
+    
     finalize_global_grid()
-    return nothing
+    return Linf_abs
 end
 
-swe2d_topography_frames(do_viz = true, force_array_output = false)
+swe2d_topography_frames(125, 125;
+    outdir = "docs/frames/frames_topography_multi",
+    do_viz = true,
+    force_array_output = true
+)
