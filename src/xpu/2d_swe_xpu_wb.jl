@@ -490,6 +490,18 @@ end
     return nothing
 end
 
+@parallel_indices (ix_out, iy_out) function downsample_kernel!(out_arr, in_arr, start_x, step_x, start_y, step_y)
+    nx_out, ny_out = size(out_arr)
+    
+    if ix_out <= nx_out && iy_out <= ny_out
+        ix_in = start_x + (ix_out - 1) * step_x
+        iy_in = start_y + (iy_out - 1) * step_y
+        out_arr[ix_out, iy_out] = in_arr[ix_in, iy_in]
+    end
+    
+    return nothing
+end
+
 function check_bc_preserves_eta(h, z, η0, ix_roi, iy_roi; tol=1e-8)
     """ Check if BC (eta = h + z) = eta0 """
     eta_roi = h[ix_roi, iy_roi] .+ z[ix_roi, iy_roi]
@@ -667,8 +679,6 @@ function load_topography_data(domain_expansion_factor, nx_aoi_ext, ny_aoi_ext)
     return z, η0
 end
 
-eager_slice(A, ix, iy) = A[ix, iy]
-
 # -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
@@ -745,6 +755,14 @@ eager_slice(A, ix, iy) = A[ix, iy]
     # Create the strided ranges
     ix_roi_low = ix_roi[1:step_x:end]
     iy_roi_low = iy_roi[1:step_y:end]
+    nx_low = length(ix_roi_low)
+    ny_low = length(iy_roi_low)
+    start_x = first(ix_roi_low)
+    start_y = first(iy_roi_low)
+
+    # Allocate low-res arrays for visualization output
+    h_low_gpu = @zeros(nx_low, ny_low)
+    z_low_gpu = @zeros(nx_low, ny_low)
 
     # state
     h  = @zeros(nx, ny)
@@ -900,8 +918,10 @@ eager_slice(A, ix, iy) = A[ix, iy]
         print("Using visualization: ", use_makie ? "Makie" : "Array output")
         mkpath(outdir)
 
-        h_slice = Array(eager_slice(h, ix_roi_low, iy_roi_low))
-        z_slice = Array(eager_slice(z, ix_roi_low, iy_roi_low))
+        @parallel downsample_kernel!(h_low_gpu, h, start_x, step_x, start_y, step_y)
+        @parallel downsample_kernel!(z_low_gpu, z, start_x, step_x, start_y, step_y)
+        h_slice = Array(h_low_gpu)
+        z_slice = Array(z_low_gpu)
 
         if use_makie
             vertical_exaggeration = 6.0
@@ -1026,8 +1046,10 @@ eager_slice(A, ix, iy) = A[ix, iy]
 
         if it % nvis == 0
             if do_viz
-                h_slice = Array(eager_slice(h, ix_roi_low, iy_roi_low))
-                z_slice = Array(eager_slice(z, ix_roi_low, iy_roi_low))
+                @parallel downsample_kernel!(h_low_gpu, h, start_x, step_x, start_y, step_y)
+                @parallel downsample_kernel!(z_low_gpu, z, start_x, step_x, start_y, step_y)
+                h_slice = Array(h_low_gpu)
+                z_slice = Array(z_low_gpu)
 
                 if use_makie
                     ηtmp_plot  = vertical_exaggeration .* (h_slice .+ z_slice)
@@ -1096,7 +1118,7 @@ end
 swe2d_topography_frames(250, 250;
     outdir = "docs/frames/frames_topography",
     do_viz = true,
-    force_array_output = false
+    force_array_output = true
 )
 
 # # error benchmark
