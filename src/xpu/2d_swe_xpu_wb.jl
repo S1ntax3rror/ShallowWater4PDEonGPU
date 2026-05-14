@@ -667,7 +667,7 @@ function load_topography_data(domain_expansion_factor, nx_aoi_ext, ny_aoi_ext)
     return z, η0
 end
 
-
+eager_slice(A, ix, iy) = A[ix, iy]
 
 # -----------------------------------------------------------------------------
 # Main
@@ -900,8 +900,8 @@ end
         print("Using visualization: ", use_makie ? "Makie" : "Array output")
         mkpath(outdir)
 
-        h_slice = Array(getindex(h, ix_roi_low, iy_roi_low))
-        z_slice = Array(getindex(z, ix_roi_low, iy_roi_low))
+        h_slice = Array(eager_slice(h, ix_roi_low, iy_roi_low))
+        z_slice = Array(eager_slice(z, ix_roi_low, iy_roi_low))
 
         if use_makie
             vertical_exaggeration = 6.0
@@ -1026,8 +1026,8 @@ end
 
         if it % nvis == 0
             if do_viz
-                h_slice = Array(getindex(h, ix_roi_low, iy_roi_low))
-                z_slice = Array(getindex(z, ix_roi_low, iy_roi_low))
+                h_slice = Array(eager_slice(h, ix_roi_low, iy_roi_low))
+                z_slice = Array(eager_slice(z, ix_roi_low, iy_roi_low))
 
                 if use_makie
                     ηtmp_plot  = vertical_exaggeration .* (h_slice .+ z_slice)
