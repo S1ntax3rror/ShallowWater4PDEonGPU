@@ -368,88 +368,79 @@ end
     return nothing
 end
 
-
-@parallel_indices (ix, iy) function all_bc!(h, hu, hv, g, dt, _dx, _dy)
+@parallel_indices (iy) function left_right_bc!(h, hu, hv, g, dt, _dx)
     nx, ny = size(h)
 
     # Left boundary (ix=1)
-    if ix == 1 && iy <= ny
-        cL = bc_speed_x(h, hu, 1, iy, g) * dt * _dx
-        αL = (cL - 1) / (cL + 1)
+    cL = bc_speed_x(h, hu, 1, iy, g) * dt * _dx
+    αL = (cL - 1) / (cL + 1)
 
-        h1  = max(0.0, h[2, iy] + αL * (h[2, iy] - h[1, iy]))
-        hu1 = hu[2, iy] + αL * (hu[2, iy] - hu[1, iy])
-        hv1 = hv[2, iy] + αL * (hv[2, iy] - hv[1, iy])
+    h1  = max(0.0, h[2, iy] + αL * (h[2, iy] - h[1, iy]))
+    hu1 = hu[2, iy] + αL * (hu[2, iy] - hu[1, iy])
+    hv1 = hv[2, iy] + αL * (hv[2, iy] - hv[1, iy])
 
-        if h1 <= h_eps
-            hu1 = 0.0
-            hv1 = 0.0
-        end
-
-        h[1, iy]    = h1
-        hu[1, iy]   = hu1
-        hv[1, iy]   = hv1
+    if h1 <= h_eps
+        hu1 = 0.0
+        hv1 = 0.0
     end
 
-    # Right boundary (ix=nx)
-    if ix == nx && iy <= ny
-    
-        cR = bc_speed_x(h, hu, nx, iy, g) * dt * _dx
-        αR = (cR - 1) / (cR + 1)
+    cR = bc_speed_x(h, hu, nx, iy, g) * dt * _dx
+    αR = (cR - 1) / (cR + 1)
 
-        hR  = max(0.0, h[end-1, iy]  + αR * (h[end-1, iy]  - h[end, iy]))
-        huR = hu[end-1, iy] + αR * (hu[end-1, iy] - hu[end, iy])
-        hvR = hv[end-1, iy] + αR * (hv[end-1, iy] - hv[end, iy])
+    hR  = max(0.0, h[end-1, iy]  + αR * (h[end-1, iy]  - h[end, iy]))
+    huR = hu[end-1, iy] + αR * (hu[end-1, iy] - hu[end, iy])
+    hvR = hv[end-1, iy] + αR * (hv[end-1, iy] - hv[end, iy])
 
-        if hR <= h_eps
-            huR = 0.0
-            hvR = 0.0
-        end
-
-        h[end, iy]  = hR
-        hu[end, iy] = huR
-        hv[end, iy] = hvR
+    if hR <= h_eps
+        huR = 0.0
+        hvR = 0.0
     end
+
+    h[1, iy]    = h1
+    hu[1, iy]   = hu1
+    hv[1, iy]   = hv1
+
+    h[end, iy]  = hR
+    hu[end, iy] = huR
+    hv[end, iy] = hvR
+    return nothing
+end
+
+@parallel_indices (ix) function bottom_top_bc!(h, hu, hv, g, dt, _dy)
+    nx, ny = size(h)
 
     # Bottom boundary (iy=1)
-    if iy == 1 && ix <= nx
-        cB = bc_speed_y(h, hv, ix, 1, g) * dt * _dy
-        αB = (cB - 1) / (cB + 1)
+    cB = bc_speed_y(h, hv, ix, 1, g) * dt * _dy
+    αB = (cB - 1) / (cB + 1)
 
-        hB  = max(0.0, h[ix, 2]  + αB * (h[ix, 2]  - h[ix, 1]))
-        huB = hu[ix, 2] + αB * (hu[ix, 2] - hu[ix, 1])
-        hvB = hv[ix, 2] + αB * (hv[ix, 2] - hv[ix, 1])
+    hB  = max(0.0, h[ix, 2]  + αB * (h[ix, 2]  - h[ix, 1]))
+    huB = hu[ix, 2] + αB * (hu[ix, 2] - hu[ix, 1])
+    hvB = hv[ix, 2] + αB * (hv[ix, 2] - hv[ix, 1])
 
-        if hB <= h_eps
-            huB = 0.0
-            hvB = 0.0
-        end
-
-        h[ix, 1]    = hB
-        hu[ix, 1]   = huB
-        hv[ix, 1]   = hvB
-
+    if hB <= h_eps
+        huB = 0.0
+        hvB = 0.0
     end
 
-    # Top boundary (iy=ny)
-    if iy == ny && ix <= nx
+    cT = bc_speed_y(h, hv, ix, ny, g) * dt * _dy
+    αT = (cT - 1) / (cT + 1)
 
-        cT = bc_speed_y(h, hv, ix, ny, g) * dt * _dy
-        αT = (cT - 1) / (cT + 1)
+    hT  = max(0.0, h[ix, end-1]  + αT * (h[ix, end-1]  - h[ix, end]))
+    huT = hu[ix, end-1] + αT * (hu[ix, end-1] - hu[ix, end])
+    hvT = hv[ix, end-1] + αT * (hv[ix, end-1] - hv[ix, end])
 
-        hT  = max(0.0, h[ix, end-1]  + αT * (h[ix, end-1]  - h[ix, end]))
-        huT = hu[ix, end-1] + αT * (hu[ix, end-1] - hu[ix, end])
-        hvT = hv[ix, end-1] + αT * (hv[ix, end-1] - hv[ix, end])
-
-        if hT <= h_eps
-            huT = 0.0
-            hvT = 0.0
-        end
-
-        h[ix, end]  = hT
-        hu[ix, end] = huT
-        hv[ix, end] = hvT
+    if hT <= h_eps
+        huT = 0.0
+        hvT = 0.0
     end
+
+    h[ix, 1]    = hB
+    hu[ix, 1]   = huB
+    hv[ix, 1]   = hvB
+
+    h[ix, end]  = hT
+    hu[ix, end] = huT
+    hv[ix, end] = hvT
     return nothing
 end
 
@@ -995,7 +986,8 @@ end
 
         @parallel dry_cell_fix!(h, hu, hv, hmin)
 
-        @parallel all_bc!(h, hu, hv, g, dt, _dx, _dy)
+        @parallel left_right_bc!(h, hu, hv, g, dt, _dx)
+        @parallel bottom_top_bc!(h, hu, hv, g, dt, _dy)
 
         @parallel sponge_layer!(hu, hv, σ)
         @parallel dry_cell_fix!(h, hu, hv, hmin)
