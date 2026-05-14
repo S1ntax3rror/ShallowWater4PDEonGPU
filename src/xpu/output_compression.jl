@@ -2,6 +2,7 @@ using Serialization
 using Tar
 using CodecZlib
 using Printf
+using Base.Threads
 
 # Define our maximum dimension for each "Quality" tag
 const QUALITIES = Dict(
@@ -51,41 +52,45 @@ function process_folder(quality::String, indir::String)
 
     println("Found $(length(files)) frames. Compressing to $quality (max dimension $max_dim)...")
 
-    # Read the first file to determine original dimensions and calculate scaling
+    # Determine orig dimensions and calc scaling
     first_file = joinpath(indir, files[1])
     data = deserialize(first_file)
     nx, ny = size(data.h)
     
-    # Calculate new dimensions while maintaining the aspect ratio
+    # Calc new dimensions while maintaining the aspect ratio
     scale = min(1.0, max_dim / max(nx, ny))
     new_nx = max(1, round(Int, nx * scale))
     new_ny = max(1, round(Int, ny * scale))
     
     println("Original size: $(nx)x$(ny) -> New downsampled size: $(new_nx)x$(new_ny)")
+    println("Using $(Threads.nthreads()) threads for processing...")
+
+    completed = Threads.Atomic{Int}(0)
+    total_files = length(files)
 
     # Downsample all arrays
-    for (i, f) in enumerate(files)
+    Threads.@threads for i in eachindex(files)
+        f = files[i]
+        
         inpath = joinpath(indir, f)
         outpath = joinpath(outdir, f)
         
         frame_data = deserialize(inpath)
-        
         h_small = downsample_array(frame_data.h, new_nx, new_ny)
 
-        if i == 1
+        if haskey(frame_data, :z)
             z_small = downsample_array(frame_data.z, new_nx, new_ny)
-        
-            # Serialize back to the temporary folder
             serialize(outpath, (h=h_small, z=z_small))
         else
-            # Serialize only the downsampled h for subsequent frames (z is static)
             serialize(outpath, (h=h_small,))
         end
 
-        if i % 5 == 0 || i == length(files)
-            percent = 100 * i / length(files)
-            @printf("\rDownsampling: %.1f%%", percent)
-            flush(stdout)
+        Threads.atomic_add!(completed, 1)
+        curr = completed[]
+
+        if curr % max(1, div(total_files, 20)) == 0 || curr == total_files
+            percent = 100 * curr / total_files
+            print("\rDownsampling: $(round(percent, digits=1))% ($curr/$total_files)")
         end
     end
     println("\nDownsampling complete.")
@@ -94,11 +99,18 @@ function process_folder(quality::String, indir::String)
     tarball = joinpath(indir, "compressed_frames_$(quality).tar.gz")
     println("Creating cross-file compressed archive (this might take a minute)...")
     
-    # level=9 for maximum compression
-    open(tarball, "w") do file
-        stream = GzipCompressorStream(file; level=9)
-        Tar.create(outdir, stream)
-        close(stream)
+    try
+        # Attempt to use 'pigz' (parallel gzip)
+        n_cores = Threads.nthreads()
+        run(pipeline(`tar -cf - -C $(dirname(outdir)) $(basename(outdir))`, `pigz -p $n_cores -9`, tarball))
+        println("Archive created blazingly fast using system pigz!")
+    catch e
+        println("System 'pigz' not found. Falling back to single-threaded Julia compression (this may take a few minutes)...")
+        open(tarball, "w") do file
+            stream = GzipCompressorStream(file; level=9)
+            Tar.create(outdir, stream)
+            close(stream)
+        end
     end
     
     println("Archive ready for download: $tarball")
