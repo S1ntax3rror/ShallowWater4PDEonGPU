@@ -490,18 +490,6 @@ end
     return nothing
 end
 
-@parallel_indices (ix_out, iy_out) function downsample_kernel!(out_arr, in_arr, start_x, step_x, start_y, step_y)
-    nx_out, ny_out = size(out_arr)
-    
-    if ix_out <= nx_out && iy_out <= ny_out
-        ix_in = start_x + (ix_out - 1) * step_x
-        iy_in = start_y + (iy_out - 1) * step_y
-        out_arr[ix_out, iy_out] = in_arr[ix_in, iy_in]
-    end
-    
-    return nothing
-end
-
 function check_bc_preserves_eta(h, z, η0, ix_roi, iy_roi; tol=1e-8)
     """ Check if BC (eta = h + z) = eta0 """
     eta_roi = h[ix_roi, iy_roi] .+ z[ix_roi, iy_roi]
@@ -679,40 +667,19 @@ function load_topography_data(domain_expansion_factor, nx_aoi_ext, ny_aoi_ext)
     return z, η0
 end
 
+
+
 # -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
 
-@views function swe2d_topography_frames(nx_aoi, ny_aoi; outdir = "frames", do_viz = true, force_array_output=false, debug_roi=false, max_output_res="HD")
+@views function swe2d_topography_frames(nx_aoi, ny_aoi; outdir = "frames", do_viz = true, force_array_output=false, debug_roi=false)
     # physics and numerics
     lx_aoi = 50.0 # aoi = area of interest
     ly_aoi = 50.0
 
     # Multiply domain size to allow for sponge layer and BCs
     domain_expansion_factor = 3
-
-    # Determine max output res
-    if max_output_res == "SD"
-        max_output_res_x = 640
-        max_output_res_y = 480
-    elseif max_output_res == "HD"
-        max_output_res_x = 1280
-        max_output_res_y = 720
-    elseif max_output_res == "FULL HD"
-        max_output_res_x = 1920
-        max_output_res_y = 1080
-    elseif max_output_res == "2K"
-        max_output_res_x = 2560
-        max_output_res_y = 1440
-    elseif max_output_res == "4K"
-        max_output_res_x = 3840
-        max_output_res_y = 2160
-    elseif max_output_res == "8K"
-        max_output_res_x = 7680
-        max_output_res_y = 4320
-    else
-        error("Unsupported max_output_res: $max_output_res. Use 'HD' or '4K'.")
-    end
 
     lx = domain_expansion_factor * lx_aoi
     ly = domain_expansion_factor * ly_aoi
@@ -729,7 +696,7 @@ end
 
     _dx  = 1.0 / dx
     _dy  = 1.0 / dy
-
+    
     xs = LinRange(-lx / 2, lx / 2, nx)
     ys = LinRange(-ly / 2, ly / 2, ny)
 
@@ -738,8 +705,8 @@ end
     pad_y = round(Int, (ny - ny_aoi) / 2)
 
     if debug_roi
-        ix_roi = 1:nx
-        iy_roi = 1:ny
+    ix_roi = 1:nx
+    iy_roi = 1:ny
     else
         ix_roi = (pad_x + 1):(pad_x + nx_aoi)
         iy_roi = (pad_y + 1):(pad_y + ny_aoi)
@@ -747,22 +714,6 @@ end
 
     xs_roi = xs[ix_roi]
     ys_roi = ys[iy_roi]
-
-    # Calculate the striding steps to hit target resolution
-    step_x = max(1, floor(Int, length(ix_roi) / max_output_res_x))
-    step_y = max(1, floor(Int, length(iy_roi) / max_output_res_y))
-
-    # Create the strided ranges
-    ix_roi_low = ix_roi[1:step_x:end]
-    iy_roi_low = iy_roi[1:step_y:end]
-    nx_low = length(ix_roi_low)
-    ny_low = length(iy_roi_low)
-    start_x = first(ix_roi_low)
-    start_y = first(iy_roi_low)
-
-    # Allocate low-res arrays for visualization output
-    h_low_gpu = @zeros(nx_low, ny_low)
-    z_low_gpu = @zeros(nx_low, ny_low)
 
     # state
     h  = @zeros(nx, ny)
@@ -918,10 +869,8 @@ end
         print("Using visualization: ", use_makie ? "Makie" : "Array output")
         mkpath(outdir)
 
-        @parallel downsample_kernel!(h_low_gpu, h, start_x, step_x, start_y, step_y)
-        @parallel downsample_kernel!(z_low_gpu, z, start_x, step_x, start_y, step_y)
-        h_slice = Array(h_low_gpu)
-        z_slice = Array(z_low_gpu)
+        z_slice = z[ix_roi, iy_roi]
+        h_slice = h[ix_roi, iy_roi]
 
         if use_makie
             vertical_exaggeration = 6.0
@@ -941,7 +890,7 @@ end
             η_water_plot  = Observable(η_water_plot0)
             η_water_color = Observable(η_water_color0)
 
-            fig = Figure(size = (max_output_res_x, max_output_res_y))
+            fig = Figure(size = (1200, 900))
             ax = Axis3(
                 fig[1, 1],
                 xlabel = "x",
@@ -1046,10 +995,8 @@ end
 
         if it % nvis == 0
             if do_viz
-                @parallel downsample_kernel!(h_low_gpu, h, start_x, step_x, start_y, step_y)
-                @parallel downsample_kernel!(z_low_gpu, z, start_x, step_x, start_y, step_y)
-                h_slice = Array(h_low_gpu)
-                z_slice = Array(z_low_gpu)
+                h_slice = h[ix_roi, iy_roi]
+                z_slice = z[ix_roi, iy_roi]
 
                 if use_makie
                     ηtmp_plot  = vertical_exaggeration .* (h_slice .+ z_slice)
@@ -1118,7 +1065,7 @@ end
 swe2d_topography_frames(250, 250;
     outdir = "docs/frames/frames_topography",
     do_viz = true,
-    force_array_output = true
+    force_array_output = false
 )
 
 # # error benchmark
