@@ -26,7 +26,7 @@ end
 using Printf
 
 const h_eps = 1e-2
-const nt_nx_multiplier = 5
+const nt_nx_multiplier = 2
 
 @inline avx_comp(hv1, hv2, h, ix, iy) = 0.5 * (hv1[ix, iy] * hv2[ix, iy] / h[ix, iy] + hv1[ix+1, iy] * hv2[ix+1, iy] / h[ix+1, iy])
 @inline avy_comp(hv1, hv2, h, ix, iy) = 0.5 * (hv1[ix, iy] * hv2[ix, iy] / h[ix, iy] + hv1[ix, iy+1] * hv2[ix, iy+1] / h[ix, iy+1])
@@ -490,6 +490,18 @@ end
     return nothing
 end
 
+@parallel_indices (ix_out, iy_out) function downsample_kernel!(out_arr, in_arr, start_x, step_x, start_y, step_y)
+    nx_out, ny_out = size(out_arr)
+    
+    if ix_out <= nx_out && iy_out <= ny_out
+        ix_in = start_x + (ix_out - 1) * step_x
+        iy_in = start_y + (iy_out - 1) * step_y
+        out_arr[ix_out, iy_out] = in_arr[ix_in, iy_in]
+    end
+    
+    return nothing
+end
+
 function check_bc_preserves_eta(h, z, η0, ix_roi, iy_roi; tol=1e-8)
     """ Check if BC (eta = h + z) = eta0 """
     eta_roi = h[ix_roi, iy_roi] .+ z[ix_roi, iy_roi]
@@ -653,7 +665,10 @@ function load_topography_data(domain_expansion_factor, nx_aoi_ext, ny_aoi_ext)
             in_roi = (1 <= i - pad_x <= nx_aoi_ext) && (1 <= j - pad_y <= ny_aoi_ext)
             
             # If in ROI, load the wave. If in padding, use resting sea level (0.0)
-            η0_expanded[i, j] = in_roi ? η0_inner[i - pad_x, j - pad_y] : 0.0
+            # η0_expanded[i, j] = in_roi ? η0_inner[i - pad_x, j - pad_y] : 0.0
+
+            # Alternatively, stretch the wave data outwards -> Huge watermass just like in a tsunami scenario
+            η0_expanded[i, j] = η0_inner[orig_i, orig_j]
         end
     end
 
@@ -664,24 +679,40 @@ function load_topography_data(domain_expansion_factor, nx_aoi_ext, ny_aoi_ext)
     return z, η0
 end
 
-
-
 # -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
 
-@views function swe2d_topography_frames(nx_aoi, ny_aoi; outdir = "frames", do_viz = true, force_array_output=false)
+@views function swe2d_topography_frames(nx_aoi, ny_aoi; outdir = "frames", do_viz = true, force_array_output=false, debug_roi=false, max_output_res="HD")
     # physics and numerics
     lx_aoi = 50.0 # aoi = area of interest
     ly_aoi = 50.0
-    #nx_aoi = 250
-    #ny_aoi = 250
-
-    desired_output_resolution_x = 500 # Desired output resolution in x direction (number of points)
-    desired_output_resolution_y = 500 # Desired output resolution in y direction (number of points) 
 
     # Multiply domain size to allow for sponge layer and BCs
     domain_expansion_factor = 3
+
+    # Determine max output res
+    if max_output_res == "SD"
+        max_output_res_x = 640
+        max_output_res_y = 480
+    elseif max_output_res == "HD"
+        max_output_res_x = 1280
+        max_output_res_y = 720
+    elseif max_output_res == "FULL HD"
+        max_output_res_x = 1920
+        max_output_res_y = 1080
+    elseif max_output_res == "2K"
+        max_output_res_x = 2560
+        max_output_res_y = 1440
+    elseif max_output_res == "4K"
+        max_output_res_x = 3840
+        max_output_res_y = 2160
+    elseif max_output_res == "8K"
+        max_output_res_x = 7680
+        max_output_res_y = 4320
+    else
+        error("Unsupported max_output_res: $max_output_res. Use 'HD' or '4K'.")
+    end
 
     lx = domain_expansion_factor * lx_aoi
     ly = domain_expansion_factor * ly_aoi
@@ -698,9 +729,7 @@ end
 
     _dx  = 1.0 / dx
     _dy  = 1.0 / dy
-    _2dx = 1.0 / (2 * dx)
-    _2dy = 1.0 / (2 * dy)
-    
+
     xs = LinRange(-lx / 2, lx / 2, nx)
     ys = LinRange(-ly / 2, ly / 2, ny)
 
@@ -708,16 +737,32 @@ end
     pad_x = round(Int, (nx - nx_aoi) / 2)
     pad_y = round(Int, (ny - ny_aoi) / 2)
 
-    #full domain indices
-    # ix_roi = 1:nx
-    # iy_roi = 1:ny
-
-    # ROI indices for visualization
-    ix_roi = (pad_x + 1):(pad_x + nx_aoi)
-    iy_roi = (pad_y + 1):(pad_y + ny_aoi)
+    if debug_roi
+        ix_roi = 1:nx
+        iy_roi = 1:ny
+    else
+        ix_roi = (pad_x + 1):(pad_x + nx_aoi)
+        iy_roi = (pad_y + 1):(pad_y + ny_aoi)
+    end
 
     xs_roi = xs[ix_roi]
     ys_roi = ys[iy_roi]
+
+    # Calculate the striding steps to hit target resolution
+    step_x = max(1, floor(Int, length(ix_roi) / max_output_res_x))
+    step_y = max(1, floor(Int, length(iy_roi) / max_output_res_y))
+
+    # Create the strided ranges
+    ix_roi_low = ix_roi[1:step_x:end]
+    iy_roi_low = iy_roi[1:step_y:end]
+    nx_low = length(ix_roi_low)
+    ny_low = length(iy_roi_low)
+    start_x = first(ix_roi_low)
+    start_y = first(iy_roi_low)
+
+    # Allocate low-res arrays for visualization output
+    h_low_gpu = @zeros(nx_low, ny_low)
+    z_low_gpu = @zeros(nx_low, ny_low)
 
     # state
     h  = @zeros(nx, ny)
@@ -782,7 +827,7 @@ end
     z, η0 = load_topography_data(domain_expansion_factor, nx_aoi, ny_aoi)
 
     # wet/dry sea level steady state
-    η0 .= 0
+    # η0 .= 0
 
     # add a gaussian bump to the initial condition to generate some wave activity
     x_c     = -10.0    # X center of the spike
@@ -873,8 +918,10 @@ end
         print("Using visualization: ", use_makie ? "Makie" : "Array output")
         mkpath(outdir)
 
-        z_slice = z[ix_roi, iy_roi]
-        h_slice = h[ix_roi, iy_roi]
+        @parallel downsample_kernel!(h_low_gpu, h, start_x, step_x, start_y, step_y)
+        @parallel downsample_kernel!(z_low_gpu, z, start_x, step_x, start_y, step_y)
+        h_slice = Array(h_low_gpu)
+        z_slice = Array(z_low_gpu)
 
         if use_makie
             vertical_exaggeration = 6.0
@@ -894,7 +941,7 @@ end
             η_water_plot  = Observable(η_water_plot0)
             η_water_color = Observable(η_water_color0)
 
-            fig = Figure(size = (1200, 900))
+            fig = Figure(size = (max_output_res_x, max_output_res_y))
             ax = Axis3(
                 fig[1, 1],
                 xlabel = "x",
@@ -999,8 +1046,10 @@ end
 
         if it % nvis == 0
             if do_viz
-                h_slice = h[ix_roi, iy_roi]
-                z_slice = z[ix_roi, iy_roi]
+                @parallel downsample_kernel!(h_low_gpu, h, start_x, step_x, start_y, step_y)
+                @parallel downsample_kernel!(z_low_gpu, z, start_x, step_x, start_y, step_y)
+                h_slice = Array(h_low_gpu)
+                z_slice = Array(z_low_gpu)
 
                 if use_makie
                     ηtmp_plot  = vertical_exaggeration .* (h_slice .+ z_slice)
