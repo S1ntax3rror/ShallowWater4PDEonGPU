@@ -936,9 +936,16 @@ end
                 # Save as a standard Julia serialized file
                 fname = joinpath(outdir, @sprintf("array_frame_%06d.jls", frame_id[]))
                 # Storing a NamedTuple containing the ROI arrays
+                serialize(fname, (h=convert.(Float32, h_slice),))
+            end
+            function save_array_with_z!()
+                frame_id[] += 1
+                # Save as a standard Julia serialized file
+                fname = joinpath(outdir, @sprintf("array_frame_%06d.jls", frame_id[]))
+                # Storing a NamedTuple containing the ROI arrays
                 serialize(fname, (h=convert.(Float32, h_slice), z=convert.(Float32, z_slice)))
             end
-            save_array!()
+            save_array_with_z!()
         end
     end
 
@@ -996,7 +1003,7 @@ end
         if it % nvis == 0
             if do_viz
                 h_slice = h[ix_roi, iy_roi]
-                z_slice = z[ix_roi, iy_roi]
+                # z_slice = z[ix_roi, iy_roi]
 
                 if use_makie
                     ηtmp_plot  = vertical_exaggeration .* (h_slice .+ z_slice)
@@ -1062,10 +1069,10 @@ end
     return Linf_abs
 end
 
-swe2d_topography_frames(250, 250;
+swe2d_topography_frames(125, 125;
     outdir = "docs/frames/frames_topography",
     do_viz = true,
-    force_array_output = false
+    force_array_output = true
 )
 
 # # error benchmark

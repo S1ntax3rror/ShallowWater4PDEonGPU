@@ -5,6 +5,7 @@ using Printf
 
 # Define our maximum dimension for each "Quality" tag
 const QUALITIES = Dict(
+    "TEST" => 50,
     "SD"  => 512,
     "HD"  => 1024,
     "FHD" => 1920,
@@ -80,7 +81,7 @@ function process_folder(quality::String, indir::String)
             # Serialize only the downsampled h for subsequent frames (z is static)
             serialize(outpath, (h=h_small,))
         end
-        
+
         if i % 5 == 0 || i == length(files)
             percent = 100 * i / length(files)
             @printf("\rDownsampling: %.1f%%", percent)
