@@ -660,17 +660,6 @@ function load_topography_data(domain_expansion_factor, nx_aoi_ext, ny_aoi_ext)
         end
     end
 
-    # add a gaussian bump to the initial condition to generate some more wave activity
-    x_c     = -10.0    # X center of the spike
-    y_c     = -20.0    # Y center of the spike
-    σ_spike = 2.5    # Width of the spike (standard deviation)
-    A_spike = 30.0    # Amplitude of the drop/spike
-    for i in eachindex(xs), j in eachindex(ys)
-        x = xs[i]
-        y = ys[j]
-        η0[i, j] += A_spike * exp(-((x - x_c)^2 + (y - y_c)^2) / (2 * σ_spike^2))
-    end
-
     # Cast to ParallelStencil arrays
     z = Data.Array(z_expanded)
     η0 = Data.Array(η0_expanded)
