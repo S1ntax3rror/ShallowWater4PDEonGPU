@@ -37,10 +37,6 @@ using Printf
 
 const g = 1.0
 
-@views function dt_multithread(max_speed_x, max_speed_y, _dx, _dy)
-    max_x = maximum(max_speed_x)
-    max_y = maximum(max_speed_y)
-    return 0.99 / (max_x * _dx + max_y * _dy)
 end
 
 # -----------------------------------------------------------------------------
@@ -602,12 +598,7 @@ end
 
     for it in 1:nt
         @parallel compute_maxspeed!(max_speed_x, max_speed_y, h, hu, hv, g)
-
-        dt = if !USE_GPU
-            dt_multithread(max_speed_x, max_speed_y, _dx, _dy)
-        else
-            0.99 / (maximum(max_speed_x) * _dx + maximum(max_speed_y) * _dy)
-        end
+    dt = 0.99 / (maximum(max_speed_x) * _dx + maximum(max_speed_y) * _dy)
 
         @parallel compute_1st_2nd_and_3th_flux!(F₁, F₂, F₃, G₁, G₂, G₃, hu, hv, h, g, max_speed_x, max_speed_y)
 
