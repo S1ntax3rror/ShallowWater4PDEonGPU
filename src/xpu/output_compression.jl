@@ -3,6 +3,7 @@ using Tar
 using CodecZlib
 using Printf
 using Base.Threads
+using CUDA
 
 # Define our maximum dimension for each "Quality" tag
 const QUALITIES = Dict(
@@ -71,7 +72,7 @@ function process_folder(quality::String, indir::String)
     # Downsample all arrays
     Threads.@threads for i in eachindex(files)
         f = files[i]
-        
+
         inpath = joinpath(indir, f)
         outpath = joinpath(outdir, f)
         
