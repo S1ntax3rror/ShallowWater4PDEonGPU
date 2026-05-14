@@ -708,12 +708,13 @@ end
     pad_x = round(Int, (nx - nx_aoi) / 2)
     pad_y = round(Int, (ny - ny_aoi) / 2)
 
-    ix_roi = 1:nx
-    iy_roi = 1:ny
+    #full domain indices
+    # ix_roi = 1:nx
+    # iy_roi = 1:ny
 
-
-    # ix_roi = (pad_x + 1):(pad_x + nx_aoi)
-    # iy_roi = (pad_y + 1):(pad_y + ny_aoi)
+    # ROI indices for visualization
+    ix_roi = (pad_x + 1):(pad_x + nx_aoi)
+    iy_roi = (pad_y + 1):(pad_y + ny_aoi)
 
     xs_roi = xs[ix_roi]
     ys_roi = ys[iy_roi]
@@ -1068,7 +1069,7 @@ end
 swe2d_topography_frames(250, 250;
     outdir = "docs/frames/frames_topography",
     do_viz = true,
-    force_array_output = false
+    force_array_output = true
 )
 
 # # error benchmark

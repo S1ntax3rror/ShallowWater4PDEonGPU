@@ -9,7 +9,7 @@ GLMakie.activate!()
 
 script_dir = @__DIR__
 
-const FRAME_DIR = normpath(joinpath(script_dir, "..", "..", "frames"))
+const FRAME_DIR = normpath(joinpath(script_dir, "..", "..", "docs", "frames", "frames_topography"))
 const OUT_DIR   = normpath(joinpath(script_dir, "..", "..", "docs", "multi_xpu_ray"))
 
 mkpath(OUT_DIR)
@@ -29,19 +29,19 @@ const FRAME_REGEX = r"array_frame_\d+\.jls$"
 # 1 = full resolution
 # 2 = faster, half resolution
 # 4 = much faster, coarser
-const STRIDE = 2
+const STRIDE = 1
 
 # Vertical visual scale:
 # Increase if the water/terrain appears too flat.
 # This scales both terrain and water in the rendered scene.
-const HEIGHT_SCALE = 0.2f0
+const HEIGHT_SCALE = 0.50f0
 
 
 # =======================================================
 # 3. CAMERA KNOBS
 # =======================================================
 
-const CAMERA_AZIMUTH = 0.70f0 * π
+CAMERA_AZIMUTH = 0.70f0 * π + π / 2
 const CAMERA_ELEVATION = 0.11f0 * π
 const CAMERA_PERSPECTIVE = 1.0f0
 
@@ -59,10 +59,11 @@ const SKY_COLOR = RGBf(0.78, 0.88, 1.0)
 
 # Terrain colors from low elevation to high elevation.
 # Higher terrain becomes brighter.
-const TERRAIN_LOW  = RGBf(0.40, 0.27, 0.15)
-const TERRAIN_MID1 = RGBf(0.64, 0.44, 0.24)
-const TERRAIN_MID2 = RGBf(0.82, 0.64, 0.38)
-const TERRAIN_HIGH = RGBf(1.00, 0.90, 0.72)
+const TERRAIN_LOW  = RGBf(0.48, 0.33, 0.18)
+const TERRAIN_MID1 = RGBf(0.72, 0.52, 0.30)
+const TERRAIN_MID2 = RGBf(0.90, 0.74, 0.48)
+const TERRAIN_HIGH = RGBf(1.00, 0.96, 0.82)
+
 
 
 # =======================================================
@@ -72,13 +73,13 @@ const TERRAIN_HIGH = RGBf(1.00, 0.90, 0.72)
 # Water opacity:
 # shallow water = more transparent
 # deep water    = more opaque
-const WATER_ALPHA_SHALLOW = 0.12f0
-const WATER_ALPHA_DEEP    = 0.42f0
+WATER_ALPHA_SHALLOW = 0.25f0
+WATER_ALPHA_DEEP    = 0.75f0
 
 # Subtle slope-based highlight.
 # Increase if you want the water surface to shimmer more.
-const WATER_HIGHLIGHT_GAIN = 0.12f0
-const WATER_HIGHLIGHT_MAX  = 0.05f0
+const WATER_HIGHLIGHT_GAIN = 0.28f0
+const WATER_HIGHLIGHT_MAX  = 0.12f0
 
 
 # =======================================================
@@ -98,16 +99,16 @@ const WATER_ABSORB_B = 0.05129f0
 # Strength of depth absorption.
 # Increase if deep water is not dark/blue enough.
 # Decrease if bottom terrain disappears too quickly.
-const WATER_DEPTH_ABSORB_SCALE = 12.0f0
+const WATER_DEPTH_ABSORB_SCALE = 36.0f0
 
 # Reflected sky colors
-const SKY_HORIZON = RGBf(0.82, 0.90, 1.00)
-const SKY_ZENITH  = RGBf(0.45, 0.66, 0.95)
+const SKY_HORIZON = RGBf(0.97, 0.99, 1.00)
+const SKY_ZENITH  = RGBf(0.72, 0.86, 1.00)
 
 # Fake specular sun highlight
 const SUN_DIRECTION = (0.35f0, 0.25f0, 0.90f0)
-const SUN_GLINT_STRENGTH = 0.08f0
-const SUN_GLINT_SHININESS = 100f0
+const SUN_GLINT_STRENGTH = 0.30f0
+const SUN_GLINT_SHININESS = 45f0
 
 # Approximate viewing direction for Fresnel reflection.
 # Tune this only if the reflected look becomes visually strange.
@@ -122,15 +123,15 @@ const VIEW_DIRECTION = (0.10f0, -0.92f0, 0.38f0)
 # shallow -> cyan
 # medium  -> turquoise
 # deep    -> dark blue
-const WATER_TINT_SHALLOW = RGBf(0.26, 0.76, 0.82)
-const WATER_TINT_MID     = RGBf(0.08, 0.72, 0.74)
-const WATER_TINT_DEEP    = RGBf(0.02, 0.10, 0.34)
+const WATER_TINT_SHALLOW = RGBf(0.22, 0.92, 0.92)
+const WATER_TINT_MID     = RGBf(0.10, 0.78, 0.80)
+const WATER_TINT_DEEP    = RGBf(0.01, 0.06, 0.24)
 
 # How strongly water tint replaces the terrain color.
 # Final interpolation weight:
 # WATER_TINT_BASE_WEIGHT + WATER_TINT_DEPTH_WEIGHT * normalized_depth
-const WATER_TINT_BASE_WEIGHT  = 0.30f0
-const WATER_TINT_DEPTH_WEIGHT = 0.55f0
+const WATER_TINT_BASE_WEIGHT  = 0.45f0
+const WATER_TINT_DEPTH_WEIGHT = 0.70f0
 
 
 # =======================================================
@@ -351,7 +352,8 @@ function make_water_colors(
 
     for I in eachindex(water)
         d = depth[I]
-        td = clamp((d - dlo) / drng, 0f0, 1f0)
+        td_linear = clamp((d - dlo) / drng, 0f0, 1f0)
+        td = sqrt(td_linear)
         n = normals[I]
 
         # -------------------------------------------------------
@@ -392,20 +394,20 @@ function make_water_colors(
         cosθ = clamp(abs(dot3(n, view_dir)), 0f0, 1f0)
         fresnel = schlick_fresnel(cosθ)
 
-        # Slightly amplified for visible Makie output
         fresnel_visual = clamp(
-            0.025f0 + 1.9f0 * fresnel,
+            0.16f0 + 5.2f0 * fresnel,
             0f0,
-            0.32f0,
+            0.95f0,
         )
 
         sky_mix = clamp(n[3], 0f0, 1f0)
         reflected_sky = lerp_rgb(SKY_HORIZON, SKY_ZENITH, sky_mix)
 
-        # -------------------------------------------------------
-        # 4. Small specular sun highlight
-        # -------------------------------------------------------
+        # Stronger light / dark contrast across the disturbance
+        light_amount = clamp(dot3(n, sun_dir), 0f0, 1f0)
+        shadow_factor = 0.30f0 + 0.70f0 * light_amount
 
+        # Bigger, more visible specular highlight
         sun_amount = clamp(dot3(n, half_vec), 0f0, 1f0)^SUN_GLINT_SHININESS
         sun_glint = SUN_GLINT_STRENGTH * sun_amount
 
@@ -416,11 +418,14 @@ function make_water_colors(
             WATER_HIGHLIGHT_MAX,
         )
 
-        # -------------------------------------------------------
-        # 5. Final water color
-        # -------------------------------------------------------
-
         rgb = lerp_rgb(refracted_col, reflected_sky, fresnel_visual)
+
+        rgb = RGBf(
+            clamp(rgb.r * shadow_factor, 0f0, 1f0),
+            clamp(rgb.g * shadow_factor, 0f0, 1f0),
+            clamp(rgb.b * shadow_factor, 0f0, 1f0),
+        )
+
         rgb = add_rgb(rgb, Float32(sun_glint + slope_highlight))
 
         alpha = lerp(WATER_ALPHA_SHALLOW, WATER_ALPHA_DEEP, td)
@@ -429,6 +434,15 @@ function make_water_colors(
     end
 
     return C
+end
+
+function center_crop(A::AbstractMatrix, n::Int)
+    nx, ny = size(A)
+
+    i0 = fld(nx - n, 2) + 1
+    j0 = fld(ny - n, 2) + 1
+
+    return A[i0:i0+n-1, j0:j0+n-1]
 end
 
 
