@@ -936,14 +936,14 @@ end
                 # Save as a standard Julia serialized file
                 fname = joinpath(outdir, @sprintf("array_frame_%06d.jls", frame_id[]))
                 # Storing a NamedTuple containing the ROI arrays
-                serialize(fname, (h=convert.(Float32, h_slice),))
+                serialize(fname, (h=Array(convert.(Float32, h_slice)),))
             end
             function save_array_with_z!()
                 frame_id[] += 1
                 # Save as a standard Julia serialized file
                 fname = joinpath(outdir, @sprintf("array_frame_%06d.jls", frame_id[]))
                 # Storing a NamedTuple containing the ROI arrays
-                serialize(fname, (h=convert.(Float32, h_slice), z=convert.(Float32, z_slice)))
+                serialize(fname, (h=Array(convert.(Float32, h_slice)), z=Array(convert.(Float32, z_slice))))
             end
             save_array_with_z!()
         end
