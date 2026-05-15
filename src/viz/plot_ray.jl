@@ -9,8 +9,9 @@ GLMakie.activate!()
 
 script_dir = @__DIR__
 
-const FRAME_DIR = normpath(joinpath(script_dir, "..", "..", "docs", "frames", "frames_topography"))
-const OUT_DIR   = normpath(joinpath(script_dir, "..", "..", "docs", "multi_xpu_ray"))
+# const FRAME_DIR = normpath(joinpath(script_dir, "..", "..", "docs", "frames", "frames_topography"))
+const FRAME_DIR = normpath(joinpath(script_dir, "..", "..", "docs", "frames", "frames_topography_multi"))
+const OUT_DIR   = normpath(joinpath(script_dir, "..", "..", "docs", "true_multi_xpu_ray"))
 
 mkpath(OUT_DIR)
 

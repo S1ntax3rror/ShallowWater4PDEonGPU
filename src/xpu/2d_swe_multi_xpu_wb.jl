@@ -28,6 +28,7 @@ end
 
 using Printf
 
+const nt_nx_multiplier = 2
 const h_eps = 1e-2
 
 @inline avx_comp(hv1, hv2, h, ix, iy) = 0.5 * (hv1[ix, iy] * hv2[ix, iy] / h[ix, iy] + hv1[ix+1, iy] * hv2[ix+1, iy] / h[ix+1, iy])
@@ -548,94 +549,109 @@ function build_topography(xs, ys; islands=Island[], background=nothing)
     return z
 end
 
-function load_topography_data(domain_expansion_factor, nx_aoi_ext, ny_aoi_ext)
-    base_file = "data/tsunamiOku/D112-94-50m.txt"
-    wave_file = "data/tsunamiOku/I112-94-50m-17a.txt"
+function load_topography_data(nx_aoi_ext, ny_aoi_ext, nx_local, ny_local, me, coords, comm_cart)
+    # Use the true global dimensions dictated by ImplicitGlobalGrid
+    NX = nx_g()
+    NY = ny_g()
 
-    nx_aoi, ny_aoi = 112, 94 # ENSURE THIS MATCHES THE DATA FILES
+    # Allocate full global arrays on ALL ranks (Required for MPI.Bcast!)
+    z_global  = zeros(NX, NY)
+    η0_global = zeros(NX, NY)
 
-    # Read as string, split by whitespace, and parse to Float64
-    read_values(filename) = parse.(Float64, split(read(filename, String)))
+    # Only Rank 0 builds the full global data
+    if me == 0
+        base_file = "data/tsunamiOku/D112-94-50m.txt"
+        wave_file = "data/tsunamiOku/I112-94-50m-17a.txt"
 
-    z_vec = read_values(base_file)
-    η0_vec = read_values(wave_file)
+        nx_aoi, ny_aoi = 112, 94 # ENSURE THIS MATCHES THE DATA FILES
 
-    if length(z_vec) != nx_aoi * ny_aoi || length(η0_vec) != nx_aoi * ny_aoi
-        error("Data files do not match expected dimensions.")
-    end
+        # Read as string, split by whitespace, and parse to Float64
+        read_values(filename) = parse.(Float64, split(read(filename, String)))
 
-    # Reshape to 2D arrays
-    z_inner_orig = reshape(z_vec, nx_aoi, ny_aoi)
-    η0_inner_orig = reshape(η0_vec, nx_aoi, ny_aoi)
+        z_vec = read_values(base_file)
+        η0_vec = read_values(wave_file)
 
-    z_inner = zeros(nx_aoi_ext, ny_aoi_ext)
-    η0_inner = zeros(nx_aoi_ext, ny_aoi_ext)
-    
-    # Bilinear interpolation to expand the inner grid to the extended grid
-    for i in 1:nx_aoi_ext
-        for j in 1:ny_aoi_ext
-            # Map the new output index continuously to the original input grid
-            x = 1 + (i - 1) * (nx_aoi - 1) / (nx_aoi_ext - 1)
-            y = 1 + (j - 1) * (ny_aoi - 1) / (ny_aoi_ext - 1)
-            
-            # Get integer bounds for interpolation
-            x1, y1 = floor(Int, x), floor(Int, y)
-            x2, y2 = min(x1 + 1, nx_aoi), min(y1 + 1, ny_aoi)
-            
-            # Calculate weights
-            wx = x - x1
-            wy = y - y1
-            
-            # Interpolate z
-            z_inner[i, j] = (1 - wx) * (1 - wy) * z_inner_orig[x1, y1] + 
-                                 wx  * (1 - wy) * z_inner_orig[x2, y1] + 
-                            (1 - wx) * wy  * z_inner_orig[x1, y2] + 
-                                 wx  * wy  * z_inner_orig[x2, y2]
-                            
-            # Interpolate η0
-            η0_inner[i, j] = (1 - wx) * (1 - wy) * η0_inner_orig[x1, y1] + 
-                                  wx  * (1 - wy) * η0_inner_orig[x2, y1] + 
-                             (1 - wx) * wy  * η0_inner_orig[x1, y2] + 
-                                  wx  * wy  * η0_inner_orig[x2, y2]
+        if length(z_vec) != nx_aoi * ny_aoi || length(η0_vec) != nx_aoi * ny_aoi
+            error("Data files do not match expected dimensions.")
+        end
+
+        # Reshape to 2D arrays
+        z_inner_orig = reshape(z_vec, nx_aoi, ny_aoi)
+        η0_inner_orig = reshape(η0_vec, nx_aoi, ny_aoi)
+
+        z_inner = zeros(nx_aoi_ext, ny_aoi_ext)
+        η0_inner = zeros(nx_aoi_ext, ny_aoi_ext)
+        
+        # Bilinear interpolation to expand the inner grid to the extended grid
+        for i in 1:nx_aoi_ext
+            for j in 1:ny_aoi_ext
+                # Map the new output index continuously to the original input grid
+                x = 1 + (i - 1) * (nx_aoi - 1) / (nx_aoi_ext - 1)
+                y = 1 + (j - 1) * (ny_aoi - 1) / (ny_aoi_ext - 1)
+                
+                # Get integer bounds for interpolation
+                x1, y1 = floor(Int, x), floor(Int, y)
+                x2, y2 = min(x1 + 1, nx_aoi), min(y1 + 1, ny_aoi)
+                
+                # Calculate weights
+                wx = x - x1
+                wy = y - y1
+                
+                # Interpolate z
+                z_inner[i, j] = (1 - wx) * (1 - wy) * z_inner_orig[x1, y1] + 
+                                     wx  * (1 - wy) * z_inner_orig[x2, y1] + 
+                                (1 - wx) * wy  * z_inner_orig[x1, y2] + 
+                                     wx  * wy  * z_inner_orig[x2, y2]
+                                
+                # Interpolate η0
+                η0_inner[i, j] = (1 - wx) * (1 - wy) * η0_inner_orig[x1, y1] + 
+                                      wx  * (1 - wy) * η0_inner_orig[x2, y1] + 
+                                 (1 - wx) * wy  * η0_inner_orig[x1, y2] + 
+                                      wx  * wy  * η0_inner_orig[x2, y2]
+            end
+        end
+
+        # Center the interpolated AOI inside the True Global Domain
+        pad_x = round(Int, (NX - nx_aoi_ext) / 2)
+        pad_y = round(Int, (NY - ny_aoi_ext) / 2)
+
+        # Pad the arrays
+        for i in 1:NX
+            for j in 1:NY
+                # Clamp to the closest valid index of the inner grid
+                orig_i = clamp(i - pad_x, 1, nx_aoi_ext)
+                orig_j = clamp(j - pad_y, 1, ny_aoi_ext)
+                
+                # Stretch the edge bathymetry outwards
+                z_global[i, j] = z_inner[orig_i, orig_j]
+                
+                # Stretch the wave data outwards 
+                η0_global[i, j] = η0_inner[orig_i, orig_j]
+            end
         end
     end
 
-    # Calculate expanded dimensions 
-    nx = round(Int, domain_expansion_factor * nx_aoi_ext)
-    ny = round(Int, domain_expansion_factor * ny_aoi_ext)
+    # Broadcast the completed global arrays from Rank 0 to all other ranks
+    MPI.Bcast!(z_global, 0, comm_cart)
+    MPI.Bcast!(η0_global, 0, comm_cart)
 
-    pad_x = round(Int, (nx - nx_aoi_ext) / 2)
-    pad_y = round(Int, (ny - ny_aoi_ext) / 2)
+    # Each rank mathematically extracts its local slice (including halos!)
+    z_local = zeros(nx_local, ny_local)
+    η0_local = zeros(nx_local, ny_local)
 
-    z_expanded = zeros(nx, ny)
-    η0_expanded = zeros(nx, ny)
-
-    # Pad the arrays
-    for i in 1:nx
-        for j in 1:ny
-            # Clamp to the closest valid index of the inner grid
-            orig_i = clamp(i - pad_x, 1, nx_aoi_ext)
-            orig_j = clamp(j - pad_y, 1, ny_aoi_ext)
+    for ix in 1:nx_local
+        for iy in 1:ny_local
+            # Map local index to global index based on MPI Cartesian coordinates
+            IX = coords[1] * (nx_local - 2) + ix
+            IY = coords[2] * (ny_local - 2) + iy
             
-            # Stretch the edge bathymetry outwards
-            z_expanded[i, j] = z_inner[orig_i, orig_j]
-            
-            # Check if the current cell is inside the ROI
-            in_roi = (1 <= i - pad_x <= nx_aoi_ext) && (1 <= j - pad_y <= ny_aoi_ext)
-            
-            # If in ROI, load the wave. If in padding, use resting sea level (0.0)
-            # η0_expanded[i, j] = in_roi ? η0_inner[i - pad_x, j - pad_y] : 0.0
-
-            # Alternatively, stretch the wave data outwards -> Huge watermass just like in a tsunami scenario
-            η0_expanded[i, j] = η0_inner[orig_i, orig_j]        
+            z_local[ix, iy] = z_global[IX, IY]
+            η0_local[ix, iy] = η0_global[IX, IY]
         end
     end
 
     # Cast to ParallelStencil arrays
-    z = Data.Array(z_expanded)
-    η0 = Data.Array(η0_expanded)
-
-    return z, η0
+    return Data.Array(z_local), Data.Array(η0_local)
 end
 
 # -----------------------------------------------------------------------------
@@ -654,7 +670,36 @@ end
     ly = domain_expansion_factor * ly_aoi
     nx = round(Int, domain_expansion_factor * nx_aoi)
     ny = round(Int, domain_expansion_factor * ny_aoi)
-    me, dims, nprocs, coords, comm_cart = init_global_grid(nx, ny, 1; select_device = false)
+
+    # # nx = round(Int, (nx_global - 2) / dims[1]) + 2
+    # # ny = round(Int, (ny_global - 2) / dims[2]) + 2
+
+    # me, dims, nprocs, coords, comm_cart = init_global_grid(nx, ny, 1; select_device = false)
+
+    # Define desired global size
+    nx_global = round(Int, domain_expansion_factor * nx_aoi)
+    ny_global = round(Int, domain_expansion_factor * ny_aoi)
+
+    # get num ranks
+    if !MPI.Initialized()
+        MPI.Init()
+    end
+    nprocs = MPI.Comm_size(MPI.COMM_WORLD)
+
+    # Get ideal 2D topology
+    dims_mpi = [0, 0]
+    MPI.Dims_create!(nprocs, dims_mpi)
+
+    # Compute local chunk sizes (+2 for halos)
+    nx = round(Int, (nx_global - 2) / dims_mpi[1]) + 2
+    ny = round(Int, (ny_global - 2) / dims_mpi[2]) + 2
+
+    # Init global grid and get local grid info
+    me, dims, nprocs, coords, comm_cart = init_global_grid(
+        nx, ny, 1; 
+        init_MPI = false, 
+        select_device = false
+    )
 
     neighbors_x = MPI.Cart_shift(comm_cart, 0, 1) 
     neighbors_y = MPI.Cart_shift(comm_cart, 1, 1)
@@ -672,9 +717,6 @@ end
     _dx  = 1.0 / dx
     _dy  = 1.0 / dy
 
-    xs = [x_g(ix, dx, h) - lx / 2 for ix in 1:nx]
-    ys = [y_g(iy, dy, h) - ly / 2 for iy in 1:ny]
-
     # ROI indices for visualization
     pad_x = round(Int, (nx_g() - nx_aoi) / 2)
     pad_y = round(Int, (ny_g() - ny_aoi) / 2)
@@ -686,14 +728,14 @@ end
         ix_roi = (pad_x + 1):(pad_x + nx_aoi)
         iy_roi = (pad_y + 1):(pad_y + ny_aoi)
     end
-
-    xs_roi = xs[ix_roi]
-    ys_roi = ys[iy_roi]
     
     # state
     h  = @zeros(nx, ny)
     hu = @zeros(nx, ny)
     hv = @zeros(nx, ny)
+
+    xs = [x_g(ix, dx, h) - lx / 2 for ix in 1:nx]
+    ys = [y_g(iy, dy, h) - ly / 2 for iy in 1:ny]
 
     # fluxes
     F₁ = @zeros(nx - 1, ny)
@@ -720,7 +762,7 @@ end
     # ]
 
 
-    z, η0 = load_topography_data(domain_expansion_factor, nx_aoi, ny_aoi)
+    z, η0 = load_topography_data(nx_aoi, ny_aoi, nx, ny, me, coords, comm_cart)
 
     # wet/dry sea level steady state
     # η0 .= 0
@@ -907,7 +949,7 @@ end
     for it in 1:nt
         @parallel compute_maxspeed!(max_speed_x, max_speed_y, h, hu, hv, z, g, vel_eps)
 
-        dt =  0.99 / (maximum(max_speed_x) * _dx + maximum(max_speed_y) * _dy)
+        dt =  0.99 / (max_g(max_speed_x) * _dx + max_g(max_speed_y) * _dy)
         time += dt
 
         if !isfinite(dt)
@@ -928,6 +970,7 @@ end
             dt,
             _dx, _dy
         )
+        update_halo!(dt_drain)
 
         @parallel compute_effective_flux_timesteps!(
             dtFx, dtGy,
@@ -990,25 +1033,29 @@ end
     # Validation
     # -------------------------------------------------------------------------
 
+
+    η = h .+ z
+
+    # Compare against the initial free surface η0
+    err = abs.(η .- η0)
+
+    # Wet-cell mask:
+    # use cells that were initially wet and are still meaningfully wet
+    wet_mask = (η0 .- z .> h_eps) .& (h .> h_eps)
+
+    local_nwet = sum(wet_mask)
+    nwet = MPI.Allreduce(local_nwet, MPI.SUM, comm_cart)
+    
+    local_err_max = local_nwet > 0 ? maximum(err[wet_mask]) : 0.0
+    local_scale_max = local_nwet > 0 ? maximum(abs.(η0[wet_mask])) : 0.0
+
+    Linf_abs = MPI.Allreduce(local_err_max, MPI.MAX, comm_cart)
+    η0_scale = MPI.Allreduce(local_scale_max, MPI.MAX, comm_cart)
+
     if me == 0
-        η = h .+ z
-
-        # Compare against the initial free surface η0
-        err = abs.(η .- η0)
-
-        # Wet-cell mask:
-        # use cells that were initially wet and are still meaningfully wet
-        wet_mask = (η0 .- z .> h_eps) .& (h .> h_eps)
-
-        nwet = sum(wet_mask)
-
         if nwet > 0
-            Linf_abs = maximum(err[wet_mask])
-
             # A sensible relative L∞ error:
             # normalize by the largest initial free-surface magnitude on wet cells
-            η0_scale = maximum(abs.(η0[wet_mask]))
-
             Linf_rel = η0_scale > 0 ? Linf_abs / η0_scale : Linf_abs
 
             println("wet cells used: ", nwet)
@@ -1026,9 +1073,9 @@ end
             println("\nSaved $(frame_id[]) frames to: $(abspath(outdir))")
         end
     end
-    
+
     finalize_global_grid()
-    return Linf_abs
+    return nothing
 end
 
 swe2d_topography_frames(125, 125;
