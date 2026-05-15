@@ -363,9 +363,7 @@ end
     return nothing
 end
 
-@parallel_indices (iy) function left_right_bc!(h, hu, hv, g, dt, _dx)
-    nx, ny = size(h)
-
+@parallel_indices (iy) function left_bc!(h, hu, hv, g, dt, _dx)
     # Left boundary (ix=1)
     cL = bc_speed_x(h, hu, 1, iy, g) * dt * _dx
     αL = (cL - 1) / (cL + 1)
@@ -379,6 +377,17 @@ end
         hv1 = 0.0
     end
 
+    h[1, iy]    = h1
+    hu[1, iy]   = hu1
+    hv[1, iy]   = hv1
+
+    return nothing
+end
+
+@parallel_indices (iy) function right_bc!(h, hu, hv, g, dt, _dx)
+    nx, ny = size(h)
+
+    # Right boundary (ix=nx)
     cR = bc_speed_x(h, hu, nx, iy, g) * dt * _dx
     αR = (cR - 1) / (cR + 1)
 
@@ -391,19 +400,13 @@ end
         hvR = 0.0
     end
 
-    h[1, iy]    = h1
-    hu[1, iy]   = hu1
-    hv[1, iy]   = hv1
-
     h[end, iy]  = hR
     hu[end, iy] = huR
     hv[end, iy] = hvR
     return nothing
 end
 
-@parallel_indices (ix) function bottom_top_bc!(h, hu, hv, g, dt, _dy)
-    nx, ny = size(h)
-
+@parallel_indices (ix) function bottom_bc!(h, hu, hv, g, dt, _dy)
     # Bottom boundary (iy=1)
     cB = bc_speed_y(h, hv, ix, 1, g) * dt * _dy
     αB = (cB - 1) / (cB + 1)
@@ -417,6 +420,16 @@ end
         hvB = 0.0
     end
 
+    h[ix, 1]    = hB
+    hu[ix, 1]   = huB
+    hv[ix, 1]   = hvB
+    return nothing
+end
+
+@parallel_indices (ix) function top_bc!(h, hu, hv, g, dt, _dy)
+    nx, ny = size(h)
+
+    # Top boundary (iy=ny)
     cT = bc_speed_y(h, hv, ix, ny, g) * dt * _dy
     αT = (cT - 1) / (cT + 1)
 
@@ -428,10 +441,6 @@ end
         huT = 0.0
         hvT = 0.0
     end
-
-    h[ix, 1]    = hB
-    hu[ix, 1]   = huB
-    hv[ix, 1]   = hvB
 
     h[ix, end]  = hT
     hu[ix, end] = huT
@@ -990,11 +999,25 @@ end
 
         @parallel dry_cell_fix!(h, hu, hv, hmin)
 
-        #TODO apply BC only at global boundaries
-        @parallel left_right_bc!(h, hu, hv, g, dt, _dx)
-        @parallel bottom_top_bc!(h, hu, hv, g, dt, _dy)
-
-        @parallel sponge_layer!(hu, hv, σ)
+        # Apply BCs only on ranks that border the global domain boundaries
+        if neighbors_x[1] == MPI.PROC_NULL
+            @parallel (1:ny) left_bc!(h, hu, hv, g, dt, _dx)
+        end
+        if neighbors_x[2] == MPI.PROC_NULL
+            @parallel (1:ny) right_bc!(h, hu, hv, g, dt, _dx)
+        end
+        if neighbors_y[1] == MPI.PROC_NULL
+            @parallel (1:nx) bottom_bc!(h, hu, hv, g, dt, _dy)
+        end
+        if neighbors_y[2] == MPI.PROC_NULL
+            @parallel (1:nx) top_bc!(h, hu, hv, g, dt, _dy)
+        end
+        
+        # Would need to only apply sponge layer on ranks that border the global domain boundaries
+        # As multiGPU runs super fast we can affort to simply make the domain huge 
+        # such that the sponge layer is not required
+        # @parallel sponge_layer!(hu, hv, σ)
+        
         @parallel dry_cell_fix!(h, hu, hv, hmin)
 
         if do_viz && it % nvis == 0
