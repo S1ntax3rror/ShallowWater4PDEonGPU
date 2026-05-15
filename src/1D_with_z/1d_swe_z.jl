@@ -1,14 +1,10 @@
 using CairoMakie, Printf, StaticArrays
 
+include("../solvers.jl")
 
 # gravity
 const g = 1.0
 
-# flux function for S = (h, hu)
-f(S) = SA[S[2], S[2]^2 / S[1] + 0.5 * g * S[1]^2]
-
-# characteristic speed magnitude
-λ(S) = abs(S[2] / S[1]) + sqrt(g * S[1])
 
 @views function swe1d_topography()
     # physics
@@ -85,37 +81,8 @@ f(S) = SA[S[2], S[2]^2 / S[1] + 0.5 * g * S[1]^2]
     # ------------------------------------------------------------------
     record(fig, "docs/1d_swe_topo.mp4"; fps=20) do io
         for it in 1:nt
-            # reconstruction step (piecewise constant)
-            @. Sᴸ = S[1:end-1]
-            @. Sᴿ = S[2:end]
 
-            # Rusanov flux
-            @. F = 0.5 * (f(Sᴸ) + f(Sᴿ)) - 0.5 * max(λ(Sᴸ), λ(Sᴿ)) * (Sᴿ - Sᴸ)
-
-            # CFL time step
-            dt = 0.99 * dx / maximum(λ.(S))
-
-            # conservative flux update
-            @. S[2:end-1] -= dt * (F[2:end] - F[1:end-1]) / dx
-
-            # source term in momentum equation: -(g h z_x)
-            for i in 2:nx-1
-                h  = S[i][1]
-                hu = S[i][2] - dt * g * h * dzdx[i]
-                S[i] = SVector(h, hu)
-            end
-
-            # reflective boundary conditions
-            S[1]   = SVector(S[2][1],   -S[2][2])
-            S[end] = SVector(S[end-1][1], -S[end-1][2])
-
-            # safety: keep h positive
-            for i in eachindex(S)
-                if S[i][1] <= 0
-                    S[i] = SVector(1e-8, S[i][2])
-                end
-            end
-
+            solve_z(S, Sᴸ, Sᴿ, F, dx, dzdx, nx)
             # update plots
             if it % nvis == 0
                 h_obs[]  = getindex.(S,1)

@@ -1,0 +1,10 @@
+name = "ShallowWaterWB"
+uuid = "f6b33e0b-0784-4ab2-903c-348cfb83a884"
+authors = ["rgassler <rgassler@student.ethz.ch>"]
+version = "0.1.0"
+
+[deps]
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+
+[compat]
+StaticArrays = "1.9.18"

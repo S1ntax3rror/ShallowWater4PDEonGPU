@@ -1,33 +1,11 @@
 using CairoMakie   # for visualisation
 using StaticArrays # for small fixed-size state vectors
 
+include("../solvers.jl")
+
 const g = 1.0
 
-# -----------------------------------------------------------------------------
-# Fluxes
-# -----------------------------------------------------------------------------
 
-# x-flux
-fx(S) = SA[
-    S[2],
-    S[2]^2 / S[1] + 0.5 * g * S[1]^2,
-    S[2] * S[3] / S[1]
-]
-
-# y-flux
-fy(S) = SA[
-    S[3],
-    S[2] * S[3] / S[1],
-    S[3]^2 / S[1] + 0.5 * g * S[1]^2
-]
-
-# characteristic wave speed estimates
-λx(S) = abs(S[2] / S[1]) + sqrt(g * S[1])
-λy(S) = abs(S[3] / S[1]) + sqrt(g * S[1])
-
-# -----------------------------------------------------------------------------
-# 2D shallow water with topography
-# -----------------------------------------------------------------------------
 
 @views function swe2d_topography()
     # physics
@@ -162,51 +140,7 @@ fy(S) = SA[
 
     record(fig, "docs/swe2d_topo.mp4"; fps = 20) do io
         for it in 1:nt
-            # reconstruction step (piecewise constant)
-            @. Sᴸ = S[1:end-1, :]
-            @. Sᴿ = S[2:end, :]
-            @. Sᴮ = S[:, 1:end-1]
-            @. Sᵀ = S[:, 2:end]
-
-            # Rusanov fluxes
-            @. F = 0.5 * (fx(Sᴸ) + fx(Sᴿ)) - 0.5 * max(λx(Sᴸ), λx(Sᴿ)) * (Sᴿ - Sᴸ)
-            @. G = 0.5 * (fy(Sᴮ) + fy(Sᵀ)) - 0.5 * max(λy(Sᴮ), λy(Sᵀ)) * (Sᵀ - Sᴮ)
-
-            # CFL time step
-            dt = 0.99 / maximum(λx.(S) ./ dx .+ λy.(S) ./ dy)
-
-            # conservative update
-            @. S[2:end-1, 2:end-1] -= dt * (
-                (F[2:end,   2:end-1] - F[1:end-1, 2:end-1]) / dx +
-                (G[2:end-1, 2:end]   - G[2:end-1, 1:end-1]) / dy
-            )
-
-            # source term update
-            for i in 2:nx-1, j in 2:ny-1
-                h  = S[i, j][1]
-                hu = S[i, j][2] - dt * g * h * dzdx[i, j]
-                hv = S[i, j][3] - dt * g * h * dzdy[i, j]
-                S[i, j] = SVector(h, hu, hv)
-            end
-
-            # reflective boundary conditions
-            for j in 1:ny
-                S[1, j]   = SVector(S[2, j][1],      -S[2, j][2],      S[2, j][3])
-                S[end, j] = SVector(S[end-1, j][1],  -S[end-1, j][2],  S[end-1, j][3])
-            end
-
-            for i in 1:nx
-                S[i, 1]   = SVector(S[i, 2][1],      S[i, 2][2],      -S[i, 2][3])
-                S[i, end] = SVector(S[i, end-1][1],  S[i, end-1][2],  -S[i, end-1][3])
-            end
-
-            # positivity fix
-            for i in 1:nx, j in 1:ny
-                if S[i, j][1] <= 0
-                    S[i, j] = SVector(hmin, S[i, j][2], S[i, j][3])
-                end
-            end
-
+            solve_z_2d(S, Sᴸ, Sᴿ, Sᴮ, Sᵀ, F, G, dx, dy, dzdx, dzdy, nx, ny)
             # visualisation
             if it % nvis == 0
                 h_obs[]  = getindex.(S, 1)

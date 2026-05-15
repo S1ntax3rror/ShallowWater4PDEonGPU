@@ -1,16 +1,9 @@
 using CairoMakie, Printf, StaticArrays
 
+include("../solvers.jl")
+
 # gravity
 const g = 1.0
-
-# flux function
-# f_h  = hu
-# f_hu = u + g*h^2/2
-f(S) = SA[S[2], S[2]^2/S[1]+0.5*g*S[1]^2]
-
-# characteristic speed magnitude
-# λ = u ± √gh
-λ(S) = abs(S[2] / S[1]) + sqrt(g * S[1])
 
 @views function swe1d()
     # physics
@@ -41,20 +34,8 @@ f(S) = SA[S[2], S[2]^2/S[1]+0.5*g*S[1]^2]
            lines!(ax[2], xs, getindex.(S, 2)))
     # time-stepping loop
     record(fig, "swe1d.gif", 1:nt; framerate=30) do it
-        # reconstruction step (piecewise constant)
-        @. Sᴸ = S[1:end-1]
-        @. Sᴿ = S[2:end]
-        # Rusanov flux (diffusion is locally proportional to characteristic speed)
-        @. F = 0.5 * (f(Sᴸ) + f(Sᴿ)) - 0.5 * max(λ(Sᴸ), λ(Sᴿ)) * (Sᴿ - Sᴸ)
-        # time step from CFL condition
-        dt = 0.99 * dx / maximum(λ.(S))
-        # state update
-        @. S[2:end-1] -= dt * (F[2:end] - F[1:end-1]) / dx
-        # boundary conditions
-        # mass is copied:       dh/dx = 0
-        # momentum is mirrored: hu    = 0
-        S[1] = S[2][1], -S[2][2]
-        S[end] = S[end-1][1], -S[end-1][2]
+
+        solve(S, Sᴸ, Sᴿ, F, dx)
         # update plots
         if it % nvis == 0
             plt[1][2] = getindex.(S, 1)
