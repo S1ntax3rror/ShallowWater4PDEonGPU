@@ -721,7 +721,7 @@ end
     
     b_width     = (8, 8, 0)
 
-    nt   = Int(nt_nx_multiplier * nx_aoi)
+    nt   = Int(nt_nx_multiplier * nx_aoi) * 50
     nvis = 5
 
     dx = lx / (nx_g() - 1)
