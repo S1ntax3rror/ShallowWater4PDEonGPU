@@ -13,4 +13,4 @@ export MPICH_GPU_SUPPORT_ENABLED=1
 export IGG_CUDAAWARE_MPI=1 # IGG
 export JULIA_CUDA_USE_COMPAT=false # IGG
 
-srun --uenv julia/25.5:v1 --view=juliaup julia --project src/xpu/2d_swe_multi_xpu.jl
+srun --uenv julia/25.5:v1 --view=juliaup julia --project src/xpu/2d_swe_multi_xpu_wb.jl

@@ -670,23 +670,26 @@ end
 # Main
 # -----------------------------------------------------------------------------
 
-@views function swe2d_topography_frames(nx_aoi, ny_aoi; outdir = "frames", do_viz = true, force_array_output = false, debug_roi=false)
+@views function swe2d_topography_frames(nx_aoi, ny_aoi; 
+            outdir = "frames", 
+            do_viz = true, 
+            force_array_output = false, 
+            debug_roi=false,
+            print_error_metrics=true,
+            gpu_test_memory_restriction_workound=false,
+            domain_expansion_factor=3.0)
     # physics and numerics
     lx_aoi = 50.0 # aoi = area of interest
     ly_aoi = 50.0
 
     # Multiply domain size to allow for sponge layer and BCs
-    domain_expansion_factor = 3
-
+    if gpu_test_memory_restriction_workound
+        domain_expansion_factor = 1.0
+    end
     lx = domain_expansion_factor * lx_aoi
     ly = domain_expansion_factor * ly_aoi
     nx = round(Int, domain_expansion_factor * nx_aoi)
     ny = round(Int, domain_expansion_factor * ny_aoi)
-
-    # # nx = round(Int, (nx_global - 2) / dims[1]) + 2
-    # # ny = round(Int, (ny_global - 2) / dims[2]) + 2
-
-    # me, dims, nprocs, coords, comm_cart = init_global_grid(nx, ny, 1; select_device = false)
 
     # Define desired global size
     nx_global = round(Int, domain_expansion_factor * nx_aoi)
@@ -773,8 +776,41 @@ end
     # Island(-15.0,-13.0, 0.12, 4.5, 6.0)   # clearly emergent   
     # ]
 
+    ## DEFAULT TOPOGRAPHY: Load from file and interpolate to the grid
+    if !gpu_test_memory_restriction_workound
+        z, η0 = load_topography_data(nx_aoi, ny_aoi, nx, ny, me, coords, comm_cart)
+    else
+        # -------------------------------------------------------------------------
+        # topography (Analytical for Scaling Study)
+        # -------------------------------------------------------------------------
+    
+        z_local  = zeros(nx, ny)
+        η0_local = zeros(nx, ny)
 
-    z, η0 = load_topography_data(nx_aoi, ny_aoi, nx, ny, me, coords, comm_cart)
+        # Physics parameters for the analytical test
+        h_base  = 15.0   # Base water depth
+        A_spike = 5.0    # Height of the Gaussian bump
+        σ_spike = max(lx, ly) / 100 # Width of the bump (scales with domain)
+
+        for i in 1:nx
+            for j in 1:ny
+                x = xs[i]
+                y = ys[j]
+                
+                # Flat bathymetry
+                z_local[i, j] = 0.0
+                
+                # Gaussian bump centered at global (0,0) + bumps at each local center 
+                η0_local[i, j] = h_base + A_spike * exp(-(x^2 + y^2) / (2 * σ_spike^2)) +
+                                        A_spike * exp(-(((x - xs[div(nx,2)])^2 + (y - ys[div(ny,2)])^2)) / (2 * σ_spike^2))
+            end
+        end
+
+        # Cast to ParallelStencil arrays (GPU or CPU depending on @init_parallel_stencil)
+        z  = Data.Array(z_local)
+        η0 = Data.Array(η0_local)
+
+    end
 
     # wet/dry sea level steady state
     # η0 .= 0
@@ -1078,7 +1114,7 @@ end
     Linf_abs = MPI.Allreduce(local_err_max, MPI.MAX, comm_cart)
     η0_scale = MPI.Allreduce(local_scale_max, MPI.MAX, comm_cart)
 
-    if me == 0
+    if me == 0 && print_error_metrics
         if nwet > 0
             # A sensible relative L∞ error:
             # normalize by the largest initial free-surface magnitude on wet cells
@@ -1104,8 +1140,22 @@ end
     return nothing
 end
 
-swe2d_topography_frames(125, 125;
+input_nx = 125
+input_ny = 125
+
+for i in 1:length(ARGS)
+    if ARGS[i] == "--nx"
+        global input_nx = parse(Int, ARGS[i+1])
+    elseif ARGS[i] == "--ny"
+        global input_ny = parse(Int, ARGS[i+1])
+    end
+end
+
+swe2d_topography_frames(input_nx, input_ny;
     outdir = "docs/frames/frames_topography_multi",
     do_viz = true,
-    force_array_output = true
+    force_array_output = false,
+    print_error_metrics = false,
+    gpu_test_memory_restriction_workound = true,
+    domain_expansion_factor = 3.0
 )
