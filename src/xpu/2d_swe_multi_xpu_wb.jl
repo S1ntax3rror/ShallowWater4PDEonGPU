@@ -1128,6 +1128,8 @@ end
             Linf_abs = NaN
             Linf_rel = NaN
         end
+    end
+    if me == 0
         # print time
         println("Total simulation time: $(round(time, digits=2)) seconds")
 
