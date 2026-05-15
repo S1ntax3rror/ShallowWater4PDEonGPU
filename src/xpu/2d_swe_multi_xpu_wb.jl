@@ -505,6 +505,9 @@ function background_bumps(xs, ys; nhills=40, amp_range=(0.01, 0.03),
     X = [x for x in xs, y in ys]
     Y = [y for x in xs, y in ys]
 
+    X = Data.Array(X_cpu)
+    Y = Data.Array(Y_cpu)
+
     Z = @zeros(length(xs), length(ys))
 
     # Domain limits
@@ -713,7 +716,7 @@ end
     neighbors_x = MPI.Cart_shift(comm_cart, 0, 1) 
     neighbors_y = MPI.Cart_shift(comm_cart, 1, 1)
     
-    b_width     = (8, 8, 1)
+    b_width     = (8, 8, 0)
 
     nt   = Int(nt_nx_multiplier * nx_aoi)
     nvis = 5
