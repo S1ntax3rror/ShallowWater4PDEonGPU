@@ -4,7 +4,13 @@ authors = ["rgassler <rgassler@student.ethz.ch>"]
 version = "0.1.0"
 
 [deps]
+ParallelStencil = "94395366-693c-11ea-3b26-d9b7aac5d958"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [compat]
+ParallelStencil = "0.16.0"
+Random = "1.11.0"
 StaticArrays = "1.9.18"
+Test = "1.11.0"

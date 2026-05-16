@@ -10,9 +10,10 @@ function runtests()
 
     printstyled("Testing SWE.jl\n"; bold=true, color=:white)
 
-    run(`$exename --project -O3 --startup-file=no -t 8 $(joinpath(testdir, "test_1d_reference.jl"))`)
-    run(`$exename --project -O3 --startup-file=no -t 8 $(joinpath(testdir, "test_seq_vs_xpu.jl"))`)
+    project = Base.active_project()
 
+    run(`$exename --project=$project -O3 --startup-file=no -t 8 $(joinpath(testdir, "test_1d_reference.jl"))`)
+    run(`$exename --project=$project -O3 --startup-file=no -t 8 $(joinpath(testdir, "test_seq_vs_xpu.jl"))`)
     return
 end
 
