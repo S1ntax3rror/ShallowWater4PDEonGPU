@@ -1,11 +1,11 @@
 # ShallowWaterEquations
 
-[![CI action](https://github.com/USER/REPOSITORY/actions/workflows/CI.yml/badge.svg)](https://github.com/USER/REPOSITORY/actions/workflows/CI.yml)  
+[![CI action](https://github.com/S1ntax3rror/ShallowWater4PDEonGPU/actions/workflows/CI.yml/badge.svg)](https://github.com/S1ntax3rror/ShallowWater4PDEonGPU/actions/workflows/CI.yml)  
 
 **Project info**
 
 This repository is the final project for the course *Solving partial differential equations in parallel on GPUs II* at ETH Zürich.  
-Authors: *Ramura Gassler (rgassler@ethz.ch), Ijiri*.
+Authors: *Ramura Gassler (rgassler@ethz.ch), Jiri Käser (jikaeser@ethz.ch)*.
 
 The main goal of this project is the development of **parallel 2D shallow-water equation (SWE) solvers** in Julia:
 
