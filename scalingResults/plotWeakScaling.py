@@ -11,10 +11,33 @@ for f in files:
 
     lines = open(os.path.join("outFiles", f)).readlines()
 
+    rep = 0
+    sum_timings = 0.0
+    num_timings = 0
+    name = f.split(".")[0].lstrip("weak_")
+    timingDict[name] = {"measurements" : [], "average" : 0.0}
+
     for line in lines:
-        if "Total simulation time:" in line:
-            time = float(line.split("Total simulation time:")[1].rstrip(" seconds\n"))
-            timingDict[int(name)] = time
+        if "Global domain size (including halos):" in line:
+            if num_timings > 0:
+                timingDict[name]["measurements"].append(sum_timings / num_timings)
+
+            resolution = line.lstrip("Global domain size (including halos):")
+            # print(resolution)
+
+            rep += 1
+            num_timings = 0
+            sum_timings = 0.0
+
+        if "seconds (" in line:
+            timing = float(line.split("seconds")[0])
+            sum_timings += timing
+            num_timings += 1
+
+    if num_timings > 0:
+        timingDict[name]["measurements"].append(sum_timings / num_timings)
+
+    timingDict[name]["average"] = sum(timingDict[name]["measurements"]) / len(timingDict[name]["measurements"])
 
 # --- Plotting Section ---
 
@@ -22,8 +45,8 @@ if not timingDict:
     print("No timing data found. Check your file contents and paths.")
 else:
     # Sort the dictionary by the number of GPUs (keys)
-    sorted_gpus = sorted(timingDict.keys())
-    sorted_times = [timingDict[gpu] for gpu in sorted_gpus]
+    sorted_gpus = sorted(timingDict.keys(), key=lambda x: int(x.split("gpu")[0]))
+    sorted_times = [timingDict[gpu]["average"] for gpu in sorted_gpus]
 
     # Create the plot
     plt.figure(figsize=(8, 6))
@@ -32,13 +55,20 @@ else:
     plt.plot(sorted_gpus, sorted_times, marker='o', linestyle='-', color='b', linewidth=2, markersize=8,
              label='Actual Time')
 
+    for gpu in sorted_gpus:
+        plt.scatter(
+            [gpu] * len(timingDict[gpu]["measurements"]),
+            timingDict[gpu]["measurements"],
+            alpha=0.7
+        )
+
     # Plot ideal weak scaling (horizontal line based on the 1-GPU/smallest-GPU run)
     ideal_time = sorted_times[0]
     plt.axhline(y=ideal_time, color='r', linestyle='--', linewidth=2, label='Ideal Weak Scaling')
 
     # Formatting the plot nicely
     plt.xlabel('Number of GPUs', fontsize=12)
-    plt.ylabel('Total Simulation Time (seconds)', fontsize=12)
+    plt.ylabel('Runtime (seconds)', fontsize=12)
     plt.title('Weak Scaling Performance', fontsize=14, fontweight='bold')
 
     # Ensure x-axis ticks match your GPU counts exactly (e.g., 1, 2, 4, 8)
@@ -53,5 +83,5 @@ else:
 
     # Save the plot to a file and display it
     plt.savefig('weak_scaling_plot.png', dpi=300)
-    print("Plot saved as 'weak_scaling_plot.png'")
+    print("Plot saved as 'weak_scaling_plot_base-resolution_nx-ny2000_nt2000.png'")
     plt.show()
