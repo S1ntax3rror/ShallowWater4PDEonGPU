@@ -28,7 +28,7 @@ end
 
 using Printf
 
-const nt_nx_multiplier = 2
+nt_nx_multiplier = 2 # no const on purpose
 const h_eps = 1e-2
 
 @inline avx_comp(hv1, hv2, h, ix, iy) = 0.5 * (hv1[ix, iy] * hv2[ix, iy] / h[ix, iy] + hv1[ix+1, iy] * hv2[ix+1, iy] / h[ix+1, iy])
@@ -732,7 +732,7 @@ end
 
     println("Local domain size (including halos): ", nx, " x ", ny)
     println("Time steps: ", nt)
-    
+
     nvis = 5
 
     dx = lx / (nx_g() - 1)
@@ -1171,6 +1171,8 @@ for i in 1:length(ARGS)
 end
 
 for rep in 1:num_repetitions
+    println(" ------------------------------- ")
+    println("Repetition $rep of $num_repetitions")
     @time swe2d_topography_frames(input_nx, input_ny; nt=2000,
         outdir = "docs/frames/frames_topography_multi",
         do_viz = true,
