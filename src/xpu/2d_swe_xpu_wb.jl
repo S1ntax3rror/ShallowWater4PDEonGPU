@@ -1095,8 +1095,12 @@ swe2d_topography_frames(nt=2000, nx_aoi=2000, ny_aoi=2000, domain_expansion_fact
 
 # Performance test:
 for n in [100, 250, 500, 1000, 1500, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000]
-    @time swe2d_topography_frames(nt=2000, nx_aoi=n, ny_aoi=n, domain_expansion_factor=1, 
+    for trial in 1:3
+        println("\nRunning performance test at resolution: $n x $n (trial $trial)")
+        println("nt: ", Int(2000))
+        @time swe2d_topography_frames(nt=2000, nx_aoi=n, ny_aoi=n, domain_expansion_factor=1, 
                                     do_viz=false, force_array_output=true, perf_test=true, debug_roi=false)
+    end
 end
 
 # # error benchmark
