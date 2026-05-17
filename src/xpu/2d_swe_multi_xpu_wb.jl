@@ -670,7 +670,8 @@ end
 # Main
 # -----------------------------------------------------------------------------
 
-@views function swe2d_topography_frames(nx_aoi, ny_aoi; 
+@views function swe2d_topography_frames(nx_aoi, ny_aoi;
+            nt=0,
             outdir = "frames", 
             do_viz = true, 
             force_array_output = false, 
@@ -695,6 +696,8 @@ end
     nx_global = round(Int, domain_expansion_factor * nx_aoi)
     ny_global = round(Int, domain_expansion_factor * ny_aoi)
 
+    println("Global domain size (including halos): ", nx_global, " x ", ny_global)
+
     # get num ranks
     if !MPI.Initialized()
         MPI.Init()
@@ -704,6 +707,8 @@ end
     # Get ideal 2D topology
     dims_mpi = [0, 0]
     MPI.Dims_create!(nprocs, dims_mpi)
+
+    println("MPI topology: ", dims_mpi[1], " x ", dims_mpi[2])
 
     # Compute local chunk sizes (+2 for halos)
     nx = round(Int, (nx_global - 2) / dims_mpi[1]) + 2
@@ -721,7 +726,13 @@ end
     
     b_width     = (8, 8, 0)
 
-    nt   = Int(nt_nx_multiplier * nx_aoi)
+    if nt==0
+        nt   = Int(nt_nx_multiplier * nx_aoi)
+    end
+
+    println("Local domain size (including halos): ", nx, " x ", ny)
+    println("Time steps: ", nt)
+    
     nvis = 5
 
     dx = lx / (nx_g() - 1)
@@ -1085,7 +1096,7 @@ end
             end
         end
         
-        if me == 0
+        if me == 0 && !gpu_test_memory_restriction_workound
             percent = 100 * it / nt
             print("\rProgress: $(round(percent, digits=1)) %")
             flush(stdout)
@@ -1160,7 +1171,7 @@ for i in 1:length(ARGS)
 end
 
 for rep in 1:num_repetitions
-    swe2d_topography_frames(input_nx, input_ny;
+    @time swe2d_topography_frames(input_nx, input_ny; nt=2000,
         outdir = "docs/frames/frames_topography_multi",
         do_viz = true,
         force_array_output = false,
