@@ -1175,7 +1175,7 @@ for rep in 1:num_repetitions
     println("Repetition $rep of $num_repetitions")
     @time swe2d_topography_frames(input_nx, input_ny; nt=2000,
         outdir = "docs/frames/frames_topography_multi",
-        do_viz = true,
+        do_viz = false,
         force_array_output = false,
         print_error_metrics = false,
         gpu_test_memory_restriction_workound = true,
