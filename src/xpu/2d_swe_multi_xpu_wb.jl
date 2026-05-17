@@ -721,7 +721,7 @@ end
     
     b_width     = (8, 8, 0)
 
-    nt   = Int(nt_nx_multiplier * nx_aoi) * 50
+    nt   = Int(nt_nx_multiplier * nx_aoi)
     nvis = 5
 
     dx = lx / (nx_g() - 1)
@@ -1131,6 +1131,7 @@ end
     end
     if me == 0
         # print time
+        println("\nSimulation completed.")
         println("Total simulation time: $(round(time, digits=2)) seconds")
 
         if do_viz
@@ -1144,20 +1145,27 @@ end
 
 input_nx = 125
 input_ny = 125
+num_repetitions = 1
 
 for i in 1:length(ARGS)
     if ARGS[i] == "--nx"
         global input_nx = parse(Int, ARGS[i+1])
     elseif ARGS[i] == "--ny"
         global input_ny = parse(Int, ARGS[i+1])
+    elseif ARGS[i] == "--num_repetitions"
+        global num_repetitions = parse(Int, ARGS[i+1])
+    elseif ARGS[i] == "--dt_multiplier"
+        global nt_nx_multiplier = parse(Float64, ARGS[i+1])
     end
 end
 
-swe2d_topography_frames(input_nx, input_ny;
-    outdir = "docs/frames/frames_topography_multi",
-    do_viz = true,
-    force_array_output = false,
-    print_error_metrics = false,
-    gpu_test_memory_restriction_workound = true,
-    domain_expansion_factor = 3.0
-)
+for rep in 1:num_repetitions
+    swe2d_topography_frames(input_nx, input_ny;
+        outdir = "docs/frames/frames_topography_multi",
+        do_viz = true,
+        force_array_output = false,
+        print_error_metrics = false,
+        gpu_test_memory_restriction_workound = true,
+        domain_expansion_factor = 3.0
+    )
+end

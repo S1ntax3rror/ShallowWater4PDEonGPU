@@ -318,25 +318,22 @@ end
 # Main
 # -----------------------------------------------------------------------------
 
-@views function swe2d_topography_frames(; outdir = "frames", do_viz = true, force_array_output=false)
+@views function swe2d_topography_frames(; nt=0, nx_aoi=125, ny_aoi=125, domain_expansion_factor=3, outdir = "frames", do_viz = true, force_array_output=false, perf_test=false)
     # physics and numerics
     lx_aoi = 50.0 # aoi = area of interest
     ly_aoi = 50.0
-    nx_aoi = 125
-    ny_aoi = 125
-
-    desired_output_resolution_x = 500 # Desired output resolution in x direction (number of points)
-    desired_output_resolution_y = 500 # Desired output resolution in y direction (number of points) 
-
-    # Multiply domain size to allow for sponge layer and BCs
-    domain_expansion_factor = 3
 
     lx = domain_expansion_factor * lx_aoi
     ly = domain_expansion_factor * ly_aoi
     nx = round(Int, domain_expansion_factor * nx_aoi)
     ny = round(Int, domain_expansion_factor * ny_aoi)
 
-    nt   = Int(2 * nx_aoi)
+    if nt == 0
+        nt = Int(2 * nx_aoi)
+    end
+
+    println("Running simulation with nt=$nt, nx_aoi=$nx_aoi, ny_aoi=$ny_aoi, total nx=$nx, total ny=$ny")
+
     nvis = 5
 
     dx = lx / (nx - 1)
@@ -433,8 +430,26 @@ end
     #       A_spike * exp(-((x - x_c)^2 + (y - y_c)^2) / (2 * σ_spike^2)) 
     #       for x in xs, y in ys]
     
+    if !perf_test
+        z, η0 = load_topography_data(domain_expansion_factor, nx_aoi, ny_aoi)
+    else
+        z  = zeros(nx, ny)
+        η0 = zeros(nx, ny)
 
-    z, η0 = load_topography_data(domain_expansion_factor, nx_aoi, ny_aoi)
+        # Physics parameters for performance test
+        h_base  = 15.0   # Base water depth
+        A_spike = 5.0    # Height of the Gaussian bump
+        σ_spike = 0.5 # Width of the bump
+        for i in 1:nx
+            for j in 1:ny
+                x = xs[i]
+                y = ys[j]
+                
+                # Gaussian bump centered at global (0,0) + bumps at each local center 
+                η0[i, j] = h_base + A_spike * exp(-(x^2 + y^2) / (2 * σ_spike^2))
+            end
+        end
+    end
 
     hmin  = 1e-6
     h .= max.(hmin, η0 .- z)
@@ -670,4 +685,11 @@ end
     return nothing
 end
 
-swe2d_topography_frames()
+
+# Performance test:
+for n in [100, 500, 1000, 2000]
+    @time swe2d_topography_frames(nt=2000, nx_aoi=n, ny_aoi=n, domain_expansion_factor=1, 
+                                    do_viz=false, force_array_output=true, perf_test=true)
+end
+
+# swe2d_topography_frames(; nt=2000, nx_aoi=125, ny_aoi=125, outdir = "frames", do_viz = false, force_array_output=false)
