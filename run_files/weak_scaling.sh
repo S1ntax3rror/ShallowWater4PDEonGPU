@@ -14,8 +14,7 @@ echo "========================================="
 # Loop over the desired number of GPUs
 for gpus in 1 2 4 8 16 32 64; do
 
-    # 1. Determine the 2D MPI topology (px * py = gpus)
-    # This exactly mimics what MPI.Dims_create! will do in Julia
+    # Determine the 2D MPI topology (px * py = gpus)
     if [ $gpus -eq 1 ]; then px=1; py=1;
     elif [ $gpus -eq 2 ]; then px=2; py=1;
     elif [ $gpus -eq 4 ]; then px=2; py=2;
@@ -25,11 +24,11 @@ for gpus in 1 2 4 8 16 32 64; do
     elif [ $gpus -eq 64 ]; then px=8; py=8;
     fi
 
-    # 2. Calculate the required GLOBAL domain size for this topology
+    #Calculate the required GLOBAL domain size for this topology
     GLOBAL_NX=$(( LOCAL_NX * px ))
     GLOBAL_NY=$(( LOCAL_NY * py ))
 
-    # 3. Calculate SLURM node and task distribution (Max 4 GPUs per node)
+    # Calculate SLURM node and task distribution (Max 4 GPUs per node)
     if [ $gpus -lt 4 ]; then
         nodes=1
         tasks_per_node=$gpus
@@ -43,7 +42,7 @@ for gpus in 1 2 4 8 16 32 64; do
 
     echo "Preparing $job_name: $nodes Node(s), $gpus GPUs, Global Grid: ${GLOBAL_NX}x${GLOBAL_NY}"
 
-    # 4. Generate the SLURM batch script using a Here-Doc
+    # Generate the SLURM batch script
     cat <<EOF > $script_name
 #!/bin/bash -l
 #SBATCH --account=julia-gpu-course2026-ethz
@@ -61,14 +60,15 @@ export IGG_CUDAAWARE_MPI=1
 export JULIA_CUDA_USE_COMPAT=false
 
 # Pass the dynamically calculated global dimensions to the Julia script
-srun --uenv julia/25.5:v1 --view=juliaup julia --project src/xpu/2d_swe_multi_xpu_wb.jl --nx $GLOBAL_NX --ny $GLOBAL_NY --num_repetitions 3 --dt_multiplier 1
+srun --uenv julia/25.5:v1 --view=juliaup julia --project src/xpu/2d_swe_multi_xpu_wb.jl --nx $GLOBAL_NX --ny $GLOBAL_NY --dt_multiplier 1
+srun --uenv julia/25.5:v1 --view=juliaup julia --project src/xpu/2d_swe_multi_xpu_wb.jl --nx $GLOBAL_NX --ny $GLOBAL_NY --dt_multiplier 1
+srun --uenv julia/25.5:v1 --view=juliaup julia --project src/xpu/2d_swe_multi_xpu_wb.jl --nx $GLOBAL_NX --ny $GLOBAL_NY --dt_multiplier 1
 EOF
 
-    # 5. Submit the generated script
+    # Submit the generated script
     sbatch $script_name
     
-    # Optional: Clean up the generated slurm file after submitting to keep the folder tidy
-    # rm $script_name 
+    rm $script_name 
 
 done
 
