@@ -696,8 +696,6 @@ end
     nx_global = round(Int, domain_expansion_factor * nx_aoi)
     ny_global = round(Int, domain_expansion_factor * ny_aoi)
 
-    println("Global domain size (including halos): ", nx_global, " x ", ny_global)
-
     # get num ranks
     if !MPI.Initialized()
         MPI.Init()
@@ -707,8 +705,6 @@ end
     # Get ideal 2D topology
     dims_mpi = [0, 0]
     MPI.Dims_create!(nprocs, dims_mpi)
-
-    println("MPI topology: ", dims_mpi[1], " x ", dims_mpi[2])
 
     # Compute local chunk sizes (+2 for halos)
     nx = round(Int, (nx_global - 2) / dims_mpi[1]) + 2
@@ -729,9 +725,13 @@ end
     if nt==0
         nt   = Int(nt_nx_multiplier * nx_aoi)
     end
-
-    println("Local domain size (including halos): ", nx, " x ", ny)
-    println("Time steps: ", nt)
+    
+    if me == 0
+        println("Global domain size (including halos): ", nx_global, " x ", ny_global)
+        println("MPI topology: ", dims_mpi[1], " x ", dims_mpi[2])
+        println("Local domain size (including halos): ", nx, " x ", ny)
+        println("Time steps: ", nt)
+    end
 
     nvis = 5
 
@@ -1163,22 +1163,16 @@ for i in 1:length(ARGS)
         global input_nx = parse(Int, ARGS[i+1])
     elseif ARGS[i] == "--ny"
         global input_ny = parse(Int, ARGS[i+1])
-    elseif ARGS[i] == "--num_repetitions"
-        global num_repetitions = parse(Int, ARGS[i+1])
     elseif ARGS[i] == "--dt_multiplier"
         global nt_nx_multiplier = parse(Float64, ARGS[i+1])
     end
 end
 
-for rep in 1:num_repetitions
-    println(" ------------------------------- ")
-    println("Repetition $rep of $num_repetitions")
-    @time swe2d_topography_frames(input_nx, input_ny; nt=2000,
-        outdir = "docs/frames/frames_topography_multi",
-        do_viz = false,
-        force_array_output = false,
-        print_error_metrics = false,
-        gpu_test_memory_restriction_workound = true,
-        domain_expansion_factor = 3.0
-    )
-end
+@time swe2d_topography_frames(input_nx, input_ny; nt=2000,
+    outdir = "docs/frames/frames_topography_multi",
+    do_viz = false,
+    force_array_output = false,
+    print_error_metrics = false,
+    gpu_test_memory_restriction_workound = true,
+    domain_expansion_factor = 3.0
+)
