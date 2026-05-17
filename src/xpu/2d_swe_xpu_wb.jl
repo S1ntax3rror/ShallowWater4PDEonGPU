@@ -771,8 +771,8 @@ end
     if !perf_test
         z, η0 = load_topography_data(domain_expansion_factor, nx_aoi, ny_aoi)
     else
-        z  = zeros(nx, ny)
-        η0 = zeros(nx, ny)
+        z_cpu  = zeros(nx, ny)
+        η0_cpu = zeros(nx, ny)
 
         # Physics parameters for performance test
         h_base  = 15.0   # Base water depth
@@ -784,7 +784,7 @@ end
                 y = ys[j]
                 
                 # Gaussian bump centered at global (0,0) + bumps at each local center 
-                η0[i, j] = h_base + A_spike * exp(-(x^2 + y^2) / (2 * σ_spike^2))
+                η0_cpu[i, j] = h_base + A_spike * exp(-(x^2 + y^2) / (2 * σ_spike^2))
             end
         end
 
