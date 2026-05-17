@@ -787,6 +787,9 @@ end
                 η0[i, j] = h_base + A_spike * exp(-(x^2 + y^2) / (2 * σ_spike^2))
             end
         end
+
+        z  = Data.Array(z_cpu)
+        η0 = Data.Array(η0_cpu)
     end
 
 
