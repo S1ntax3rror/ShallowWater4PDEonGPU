@@ -50,7 +50,7 @@ for gpus in 1 2 4 8 16 32 64; do
 #SBATCH --job-name="$job_name"
 #SBATCH --output=out/${job_name}.%j.o
 #SBATCH --error=out/${job_name}.%j.e
-#SBATCH --time=01:00:00
+#SBATCH --time=00:30:00
 #SBATCH --nodes=$nodes
 #SBATCH --ntasks=$gpus
 #SBATCH --ntasks-per-node=$tasks_per_node
@@ -61,7 +61,7 @@ export IGG_CUDAAWARE_MPI=1
 export JULIA_CUDA_USE_COMPAT=false
 
 # Pass the dynamically calculated global dimensions to the Julia script
-srun --uenv julia/25.5:v1 --view=juliaup julia --project src/xpu/2d_swe_multi_xpu_wb.jl --nx $GLOBAL_NX --ny $GLOBAL_NY
+srun --uenv julia/25.5:v1 --view=juliaup julia --project src/xpu/2d_swe_multi_xpu_wb.jl --nx $GLOBAL_NX --ny $GLOBAL_NY --num_repetitions 3 --dt_multiplier 1
 EOF
 
     # 5. Submit the generated script
