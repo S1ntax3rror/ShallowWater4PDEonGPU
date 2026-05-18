@@ -25,8 +25,8 @@ end
 
 using Printf
 
-const h_eps = 1e-2
-const nt_nx_multiplier = 2
+const h_eps = 1e-6
+const nt_nx_multiplier = 10
 
 @inline avx_comp(hv1, hv2, h, ix, iy) = 0.5 * (hv1[ix, iy] * hv2[ix, iy] / h[ix, iy] + hv1[ix+1, iy] * hv2[ix+1, iy] / h[ix+1, iy])
 @inline avy_comp(hv1, hv2, h, ix, iy) = 0.5 * (hv1[ix, iy] * hv2[ix, iy] / h[ix, iy] + hv1[ix, iy+1] * hv2[ix, iy+1] / h[ix, iy+1])
@@ -568,6 +568,282 @@ function build_topography(xs, ys; islands=Island[], background=nothing)
     return z
 end
 
+@inline function smoothstep01(s)
+    s = clamp(s, 0.0, 1.0)
+    return s^2 * (3.0 - 2.0 * s)
+end
+
+
+function build_simple_lake_dam_topography(
+    xs, ys;
+    dam_y = 0.0,
+
+    valley_slope_y = 0.006,
+    side_wall_height = 2.5,
+    side_wall_power = 4.0,
+
+    lake_center_y = 16.0,
+    lake_bowl_depth = 0.85,
+    lake_sigma_x = 18.0,
+    lake_sigma_y = 15.0,
+
+    back_slope_start_y = 24.0,
+    back_slope_height = 4.0,
+
+    z_dam = 1.80,
+    dam_sigma_y = 0.75,
+
+    breach_halfwidth = 8.0,
+
+    downstream_features = true,
+    feature_seed = 42,
+
+    n_sharp_bumps = 18,
+    n_flat_bumps = 10,
+
+    sharp_amp_range = (0.08, 0.28),
+    sharp_sigma_range = (0.8, 1.8),
+
+    flat_amp_range = (0.05, 0.18),
+    flat_sigma_x_range = (2.5, 6.0),
+    flat_sigma_y_range = (2.5, 7.5)
+)
+
+    nx = length(xs)
+    ny = length(ys)
+
+    xmin, xmax = minimum(xs), maximum(xs)
+    ymin, ymax = minimum(ys), maximum(ys)
+
+    domain_halfwidth_x = 0.5 * (xmax - xmin)
+
+    z_base_cpu     = zeros(Float64, nx, ny)
+    z_closed_cpu   = zeros(Float64, nx, ny)
+    z_breached_cpu = zeros(Float64, nx, ny)
+
+    Random.seed!(feature_seed)
+
+    # ---------------------------------------------------------
+    # Random sharp bumps (narrow hills)
+    # ---------------------------------------------------------
+    sharp_x = rand(n_sharp_bumps) .* (maximum(xs) - minimum(xs)) .+ minimum(xs)
+    sharp_y = rand(n_sharp_bumps) .* (dam_y - minimum(ys) - 4.0) .+ minimum(ys)
+    sharp_A = rand(n_sharp_bumps) .* (sharp_amp_range[2] - sharp_amp_range[1]) .+ sharp_amp_range[1]
+    sharp_σ = rand(n_sharp_bumps) .* (sharp_sigma_range[2] - sharp_sigma_range[1]) .+ sharp_sigma_range[1]
+
+    # ---------------------------------------------------------
+    # Random flatter bumps (broader hummocks)
+    # ---------------------------------------------------------
+    flat_x = rand(n_flat_bumps) .* (maximum(xs) - minimum(xs)) .+ minimum(xs)
+    flat_y = rand(n_flat_bumps) .* (dam_y - minimum(ys) - 6.0) .+ minimum(ys)
+    flat_A  = rand(n_flat_bumps) .* (flat_amp_range[2] - flat_amp_range[1]) .+ flat_amp_range[1]
+    flat_σx = rand(n_flat_bumps) .* (flat_sigma_x_range[2] - flat_sigma_x_range[1]) .+ flat_sigma_x_range[1]
+    flat_σy = rand(n_flat_bumps) .* (flat_sigma_y_range[2] - flat_sigma_y_range[1]) .+ flat_sigma_y_range[1]
+
+    for i in 1:nx
+        x = xs[i]
+
+        for j in 1:ny
+            y = ys[j]
+
+            # ---------------------------------------------------------
+            # 1. Base valley:
+            # - lower downstream y < 0
+            # - higher upstream y > 0
+            # ---------------------------------------------------------
+            longitudinal_slope =
+                valley_slope_y * y
+
+            # ---------------------------------------------------------
+            # 2. Valley side walls:
+            # rising toward left/right boundaries
+            # ---------------------------------------------------------
+            xnorm = abs(x) / max(domain_halfwidth_x, 1e-12)
+
+            side_walls =
+                side_wall_height * xnorm^side_wall_power
+
+            # ---------------------------------------------------------
+            # 3. Smooth reservoir bowl upstream of dam
+            # ---------------------------------------------------------
+            lake_bowl =
+                lake_bowl_depth *
+                exp(
+                    -(x^2) / (2 * lake_sigma_x^2)
+                    -((y - lake_center_y)^2) / (2 * lake_sigma_y^2)
+                )
+
+            # ---------------------------------------------------------
+            # 4. Mountain / back slope behind lake
+            # ---------------------------------------------------------
+            back_slope = 0.0
+
+            if y > back_slope_start_y
+                s = (y - back_slope_start_y) /
+                    max(ymax - back_slope_start_y, 1e-12)
+
+                back_slope =
+                    back_slope_height * smoothstep01(s)
+            end
+
+            # Base terrain without dam
+            z_base =
+                longitudinal_slope +
+                side_walls +
+                back_slope -
+                lake_bowl
+
+            # ---------------------------------------------------------
+            # Downstream irregular terrain only on dry side
+            # ---------------------------------------------------------
+            if downstream_features && y < dam_y
+                roughness = 0.0
+
+                # Smooth taper:
+                # little roughness near the dam, stronger farther downstream
+                taper = smoothstep01((dam_y - y) / 12.0)
+
+                # Sharp bumps
+                for k in 1:n_sharp_bumps
+                    roughness += taper * sharp_A[k] *
+                        exp(
+                            -((x - sharp_x[k])^2 + (y - sharp_y[k])^2) /
+                            (2 * sharp_σ[k]^2)
+                        )
+                end
+
+                # Flatter bumps
+                for k in 1:n_flat_bumps
+                    roughness += taper * flat_A[k] *
+                        exp(
+                            -((x - flat_x[k])^2) / (2 * flat_σx[k]^2)
+                            -((y - flat_y[k])^2) / (2 * flat_σy[k]^2)
+                        )
+                end
+
+                z_base += roughness
+            end
+
+            # A little low-frequency waviness for more natural terrain
+            if downstream_features && y < dam_y
+                taper = smoothstep01((dam_y - y) / 12.0)
+
+                z_base += taper * (
+                    0.05 * sin(0.18 * x + 0.12 * y) +
+                    0.03 * cos(0.10 * x - 0.15 * y)
+                )
+            end
+
+            # ---------------------------------------------------------
+            # 5. Dam:
+            # Dam crest at y = dam_y has constant absolute height z_dam.
+            # We raise terrain only where needed.
+            # ---------------------------------------------------------
+            dam_profile_y =
+                exp(-((y - dam_y)^2) / (2 * dam_sigma_y^2))
+
+            # Raise terrain up to constant crest elevation z_dam
+            # wherever the natural valley is lower than z_dam.
+            required_raise =
+                max(0.0, z_dam - z_base)
+
+            dam_raise =
+                required_raise * dam_profile_y
+
+            # Closed dam topography
+            z_closed =
+                z_base + dam_raise
+
+            # ---------------------------------------------------------
+            # 6. Breached dam:
+            # Remove only the middle 30% of the dam.
+            # ---------------------------------------------------------
+            inside_breach =
+                abs(x) <= breach_halfwidth
+
+            dam_raise_breached =
+                inside_breach ? 0.0 : dam_raise
+
+            z_breached =
+                z_base + dam_raise_breached
+
+            z_base_cpu[i, j]     = z_base
+            z_closed_cpu[i, j]   = z_closed
+            z_breached_cpu[i, j] = z_breached
+        end
+    end
+
+    z_closed   = Data.Array(z_closed_cpu)
+    z_breached = Data.Array(z_breached_cpu)
+    z_base     = Data.Array(z_base_cpu)
+
+    return z_closed, z_breached, z_base
+end
+
+function initialize_simple_lake_at_rest(
+    z_closed,
+    xs,
+    ys;
+    dam_y = 0.0,
+    η_lake = 1.20,
+    dam_halfwidth = 28.0
+)
+    nx, ny = size(z_closed)
+
+    z_cpu  = Array(z_closed)
+    η0_cpu = copy(z_cpu)
+
+    # -------------------------------------------------------------
+    # Fill only upstream of the dam.
+    # Wet cells receive one constant free-surface level η_lake.
+    # Dry cells satisfy η0 = z.
+    # -------------------------------------------------------------
+    for i in 1:nx
+        for j in 1:ny
+            y = ys[j]
+
+            if y >= dam_y && z_cpu[i, j] < η_lake
+                η0_cpu[i, j] = η_lake
+            else
+                η0_cpu[i, j] = z_cpu[i, j]
+            end
+        end
+    end
+
+    # -------------------------------------------------------------
+    # Diagnostics: the reservoir should not touch boundaries.
+    # -------------------------------------------------------------
+    h0_cpu = max.(0.0, η0_cpu .- z_cpu)
+
+    if maximum(h0_cpu[1, :]) > 0.0 ||
+       maximum(h0_cpu[end, :]) > 0.0 ||
+       maximum(h0_cpu[:, 1]) > 0.0 ||
+       maximum(h0_cpu[:, end]) > 0.0
+        error("Initial lake touches a domain boundary. Increase side/back terrain or lower η_lake.")
+    end
+
+    # -------------------------------------------------------------
+    # Diagnostic: dam line must be above lake surface.
+    # -------------------------------------------------------------
+
+    j_dam = argmin(abs.(ys .- dam_y))
+
+    # Only inspect the actual dam span, not the whole x-domain
+    dam_mask = abs.(xs) .<= dam_halfwidth
+    minimum_dam_crest = minimum(z_cpu[dam_mask, j_dam])
+
+    println("minimum dam crest inside dam span = ", minimum_dam_crest)
+    println("η_lake = ", η_lake)
+
+    if minimum_dam_crest < η_lake
+        error("Dam crest is lower than η_lake inside the actual dam span. Increase z_dam or reduce η_lake.")
+    end
+
+    η0 = Data.Array(η0_cpu)
+
+    return η0, η_lake
+end
+
 function load_topography_data(domain_expansion_factor, nx_aoi_ext, ny_aoi_ext)
     base_file = "data/tsunamiOku/D112-94-50m.txt"
     wave_file = "data/tsunamiOku/I112-94-50m-17a.txt"
@@ -661,7 +937,7 @@ end
 # -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
-@views function swe2d_topography_frames(; nt=0, nx_aoi=125, ny_aoi=125, domain_expansion_factor=3, outdir = "frames", do_viz = true, force_array_output=false, perf_test=false, debug_roi=false)
+@views function swe2d_topography_frames(; nt=0, nx_aoi=250, ny_aoi=250, domain_expansion_factor=3, outdir = "frames", do_viz = true, force_array_output=false, perf_test=false, debug_roi=false)
     # physics and numerics
     lx_aoi = 50.0 # aoi = area of interest
     ly_aoi = 50.0
@@ -678,7 +954,7 @@ end
         nt = Int(nt_nx_multiplier * nx_aoi)
     end
 
-    nvis = 5
+    nvis = 10
 
     dx = lx / (nx - 1)
     dy = ly / (ny - 1)
@@ -767,9 +1043,55 @@ end
     
 
     # z, η0 = load_topography_data(domain_expansion_factor, nx_aoi, ny_aoi)
-
     if !perf_test
-        z, η0 = load_topography_data(domain_expansion_factor, nx_aoi, ny_aoi)
+        dam_center_y = 0.0
+
+        z, z_breached, z_base = build_simple_lake_dam_topography(
+            xs, ys;
+            dam_y = dam_center_y,
+
+            valley_slope_y = 0.006,
+            side_wall_height = 2.5,
+            side_wall_power = 4.0,
+
+            lake_center_y = 16.0,
+            lake_bowl_depth = 0.85,
+            lake_sigma_x = 18.0,
+            lake_sigma_y = 15.0,
+
+            back_slope_start_y = 24.0,
+            back_slope_height = 4.0,
+
+            z_dam = 2.60,
+            dam_sigma_y = 0.75,
+
+            breach_halfwidth = 20.0,
+
+            downstream_features = true,
+            feature_seed = 42,
+
+            n_sharp_bumps = 20,
+            n_flat_bumps = 12,
+
+            sharp_amp_range = (0.10, 0.30),
+            sharp_sigma_range = (0.7, 1.6),
+
+            flat_amp_range = (0.06, 0.16),
+            flat_sigma_x_range = (3.0, 7.0),
+            flat_sigma_y_range = (3.0, 8.0)
+        )
+
+        η0, η_lake = initialize_simple_lake_at_rest(
+            z,
+            xs,
+            ys;
+            dam_y = dam_center_y,
+            η_lake = 1.20,
+            dam_halfwidth = 28.0
+        )
+
+        @info "Simple dam reservoir initialized"
+        @info "Lake free surface η_lake = $η_lake"
     else
         z_cpu  = zeros(nx, ny)
         η0_cpu = zeros(nx, ny)
@@ -790,6 +1112,7 @@ end
 
         z  = Data.Array(z_cpu)
         η0 = Data.Array(η0_cpu)
+        z_no_dam = z # Just for consistency in the performance test case, where we don't have a dam
     end
 
 
@@ -807,7 +1130,7 @@ end
     #     η0[i, j] += A_spike * exp(-((x - x_c)^2 + (y - y_c)^2) / (2 * σ_spike^2))
     # end
 
-    hmin  = 1e-2
+    hmin = 1e-6
     h .= max.(0.0, η0 .- z)
 
     dt_drain = @zeros(nx, ny)
@@ -947,10 +1270,12 @@ end
             @info "Saving arrays to $outdir"
             function save_array!()
                 frame_id[] += 1
-                # Save as a standard Julia serialized file
                 fname = joinpath(outdir, @sprintf("array_frame_%06d.jls", frame_id[]))
-                # Storing a NamedTuple containing the ROI arrays
-                serialize(fname, (h=Array(convert.(Float32, h_slice)),))
+
+                serialize(fname, (
+                    h = Array(convert.(Float32, h_slice)),
+                    z = Array(convert.(Float32, z[ix_roi, iy_roi]))
+                ))
             end
             function save_array_with_z!()
                 frame_id[] += 1
@@ -967,7 +1292,19 @@ end
     # main loop
     # -------------------------------------------------------------------------
 
+    release_iteration = round(Int, 0.20 * nt)
+
     for it in 1:nt
+
+        if !perf_test && it == release_iteration
+            println("\nOpening central 30% breach in dam at iteration $it / $nt")
+
+            z .= z_breached
+
+            # Refresh topography slice for output/plotting
+            z_slice = z[ix_roi, iy_roi]
+        end
+
         @parallel compute_maxspeed!(max_speed_x, max_speed_y, h, hu, hv, z, g, vel_eps)
 
         dt =  0.99 / (maximum(max_speed_x) * _dx + maximum(max_speed_y) * _dy)
@@ -1082,26 +1419,27 @@ end
     return Linf_abs
 end
 
-# swe2d_topography_frames(125, 125;
-#     outdir = "docs/frames/frames_topography",
-#     do_viz = true,
-#     force_array_output = true
-# )
+swe2d_topography_frames(; 
+    outdir = "docs/frames/frames_topography",
+    do_viz = true,
+    force_array_output = true,
+    debug_roi = true
+)
 
 
-# Warmup run to compile everything before the performance test:
-swe2d_topography_frames(nt=2000, nx_aoi=2000, ny_aoi=2000, domain_expansion_factor=1, 
-                                    do_viz=false, force_array_output=true, perf_test=true, debug_roi=false)
+# # Warmup run to compile everything before the performance test:
+# swe2d_topography_frames(nt=2000, nx_aoi=2000, ny_aoi=2000, domain_expansion_factor=1, 
+#                                     do_viz=false, force_array_output=true, perf_test=true, debug_roi=false)
 
-# Performance test:
-for n in [100, 250, 500, 1000, 1500, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000]
-    for trial in 1:3
-        println("\nRunning performance test at resolution: $n x $n (trial $trial)")
-        println("nt: ", Int(2000))
-        @time swe2d_topography_frames(nt=2000, nx_aoi=n, ny_aoi=n, domain_expansion_factor=1, 
-                                    do_viz=false, force_array_output=true, perf_test=true, debug_roi=false)
-    end
-end
+# # Performance test:
+# for n in [100, 250, 500, 1000, 1500, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000]
+#     for trial in 1:3
+#         println("\nRunning performance test at resolution: $n x $n (trial $trial)")
+#         println("nt: ", Int(2000))
+#         @time swe2d_topography_frames(nt=2000, nx_aoi=n, ny_aoi=n, domain_expansion_factor=1, 
+#                                     do_viz=false, force_array_output=true, perf_test=true, debug_roi=false)
+#     end
+# end
 
 # # error benchmark
 

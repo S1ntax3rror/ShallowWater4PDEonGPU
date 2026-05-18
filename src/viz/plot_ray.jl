@@ -9,8 +9,8 @@ GLMakie.activate!()
 
 script_dir = @__DIR__
 
-# const FRAME_DIR = normpath(joinpath(script_dir, "..", "..", "docs", "frames", "frames_topography"))
-const FRAME_DIR = normpath(joinpath(script_dir, "..", "..", "docs", "frames", "frames_topography_multi"))
+const FRAME_DIR = normpath(joinpath(script_dir, "..", "..", "docs", "frames", "frames_topography"))
+# const FRAME_DIR = normpath(joinpath(script_dir, "..", "..", "docs", "frames", "frames_topography_multi"))
 const OUT_DIR   = normpath(joinpath(script_dir, "..", "..", "docs", "true_multi_xpu_ray"))
 
 mkpath(OUT_DIR)
@@ -526,12 +526,8 @@ function render_frames()
     @info "Found $(length(paths)) frames"
     z = nothing
     for (i, path) in enumerate(paths)
-        if i == 1
-            h, z_i = read_frame_topo(path)
-            z = z_i
-        else
-            h = read_frame(path)
-        end
+        h, z_i = read_frame_topo(path)
+        z = z_i
         @info "Plotting $(basename(path))" frame=i size_h=size(h) size_z=size(z)
 
         fig = make_scene(h, z; title="SWE frame $(i)")
