@@ -1,4 +1,5 @@
 using Serialization
+using DelimitedFiles
 
 const HAS_MAKIE = try
     @eval using GLMakie
@@ -569,10 +570,18 @@ function build_topography(xs, ys; islands=Island[], background=nothing)
 end
 
 function load_topography_data(domain_expansion_factor, nx_aoi_ext, ny_aoi_ext)
-    base_file = "data/tsunamiOku/D112-94-50m.txt"
-    wave_file = "data/tsunamiOku/I112-94-50m-17a.txt"
+    # base_file = "data/tsunamiOku/D112-94-50m.txt"
+    # wave_file = "data/tsunamiOku/I112-94-50m-17a.txt"
+    
+    # spacing = 50
+    # nx_aoi, ny_aoi = 112, 94 # ENSURE THIS MATCHES THE DATA FILES
 
-    nx_aoi, ny_aoi = 112, 94 # ENSURE THIS MATCHES THE DATA FILES
+    base_file = "data/tsunamiOku/D379-687-450m.txt"
+    wave_file = "data/tsunamiOku/I379-687-450m-17a.txt"
+
+    # ENSURE THIS MATCHES THE DATA FILES
+    spacing = 450
+    nx_aoi, ny_aoi = 379, 687 
 
     # Read as string, split by whitespace, and parse to Float64
     read_values(filename) = parse.(Float64, split(read(filename, String)))
@@ -655,7 +664,7 @@ function load_topography_data(domain_expansion_factor, nx_aoi_ext, ny_aoi_ext)
     z = Data.Array(z_expanded)
     η0 = Data.Array(η0_expanded)
 
-    return z, η0
+    return z, η0, spacing*nx_aoi, spacing*ny_aoi
 end
 
 # -----------------------------------------------------------------------------
@@ -663,8 +672,8 @@ end
 # -----------------------------------------------------------------------------
 @views function swe2d_topography_frames(; nt=0, nx_aoi=125, ny_aoi=125, domain_expansion_factor=3, outdir = "frames", do_viz = true, force_array_output=false, perf_test=false, debug_roi=false)
     # physics and numerics
-    lx_aoi = 50.0 # aoi = area of interest
-    ly_aoi = 50.0
+    lx_aoi = 379 * 450 # aoi = area of interest
+    ly_aoi = 687 * 450 
 
     # Multiply domain size to allow for sponge layer and BCs
     domain_expansion_factor = 3
@@ -678,7 +687,7 @@ end
         nt = Int(nt_nx_multiplier * nx_aoi)
     end
 
-    nvis = 5
+    nvis = 25
 
     dx = lx / (nx - 1)
     dy = ly / (ny - 1)
@@ -769,7 +778,7 @@ end
     # z, η0 = load_topography_data(domain_expansion_factor, nx_aoi, ny_aoi)
 
     if !perf_test
-        z, η0 = load_topography_data(domain_expansion_factor, nx_aoi, ny_aoi)
+        z, η0, lx_aoi, ly_aoi= load_topography_data(domain_expansion_factor, nx_aoi, ny_aoi)
     else
         z_cpu  = zeros(nx, ny)
         η0_cpu = zeros(nx, ny)
@@ -888,7 +897,7 @@ end
         h_slice = h[ix_roi, iy_roi]
 
         if use_makie
-            vertical_exaggeration = 6.0
+            vertical_exaggeration = 1
             hmin_plot = 1e-3
             
             z_plot = vertical_exaggeration .* z_slice
@@ -1090,18 +1099,18 @@ end
 
 
 # Warmup run to compile everything before the performance test:
-swe2d_topography_frames(nt=2000, nx_aoi=2000, ny_aoi=2000, domain_expansion_factor=1, 
-                                    do_viz=false, force_array_output=true, perf_test=true, debug_roi=false)
+swe2d_topography_frames(nt=4000, nx_aoi=4000, ny_aoi=4000, domain_expansion_factor=2, 
+                                    do_viz=true, force_array_output=false, perf_test=false, debug_roi=false)
 
-# Performance test:
-for n in [100, 250, 500, 1000, 1500, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000]
-    for trial in 1:3
-        println("\nRunning performance test at resolution: $n x $n (trial $trial)")
-        println("nt: ", Int(2000))
-        @time swe2d_topography_frames(nt=2000, nx_aoi=n, ny_aoi=n, domain_expansion_factor=1, 
-                                    do_viz=false, force_array_output=true, perf_test=true, debug_roi=false)
-    end
-end
+# # Performance test:
+# for n in [100, 250, 500, 1000, 1500, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000]
+#     for trial in 1:3
+#         println("\nRunning performance test at resolution: $n x $n (trial $trial)")
+#         println("nt: ", Int(2000))
+#         @time swe2d_topography_frames(nt=2000, nx_aoi=n, ny_aoi=n, domain_expansion_factor=1, 
+#                                     do_viz=false, force_array_output=true, perf_test=true, debug_roi=false)
+#     end
+# end
 
 # # error benchmark
 

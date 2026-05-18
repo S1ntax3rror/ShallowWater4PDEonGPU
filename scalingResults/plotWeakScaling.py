@@ -6,8 +6,9 @@ files = os.listdir("outFiles")
 timingDict = {}
 
 for f in files:
-    name = f.split("gpu")[0].lstrip("weak_")
-    print(name)
+
+    if "swe_xpu" in f:
+        continue
 
     lines = open(os.path.join("outFiles", f)).readlines()
 
@@ -15,7 +16,8 @@ for f in files:
     sum_timings = 0.0
     num_timings = 0
     name = f.split(".")[0].lstrip("weak_")
-    timingDict[name] = {"measurements" : [], "average" : 0.0}
+    timingDict[name] = {"measurements" : [], "compilePercentage" : [], "actualTime" : [], "compileTime": [],
+                        "actualTimeAverage": 0.0, "compileTimeAverage": 0.0, "average" : 0.0}
 
     for line in lines:
         if "Global domain size (including halos):" in line:
@@ -30,7 +32,24 @@ for f in files:
             sum_timings = 0.0
 
         if "seconds (" in line:
-            timing = float(line.split("seconds")[0])
+            backupline = line
+            s_line = line
+            timing = float(s_line.split("seconds")[0])
+
+            if "compilation time" in line:
+                if "lock conflict, " in line:
+                    percentage = float(line.split("lock conflict, ")[1].split("% compilation time")[0].strip()) / 100
+                else:
+                    percentage = float(line.split("gc time, ")[1].split("% compilation time")[0].strip()) / 100
+
+                timingDict[name]["compilePercentage"].append(percentage)
+                timingDict[name]["compileTime"].append(percentage*timing)
+                timingDict[name]["actualTime"].append(timing - percentage*timing)
+            else:
+                timingDict[name]["compilePercentage"].append(0)
+                timingDict[name]["compileTime"].append(0)
+                timingDict[name]["actualTime"].append(timing)
+
             sum_timings += timing
             num_timings += 1
 
@@ -38,22 +57,29 @@ for f in files:
         timingDict[name]["measurements"].append(sum_timings / num_timings)
 
     timingDict[name]["average"] = sum(timingDict[name]["measurements"]) / len(timingDict[name]["measurements"])
+    timingDict[name]["actualTimeAverage"] = sum(timingDict[name]["actualTime"]) / len(timingDict[name]["actualTime"])
+    timingDict[name]["compileTimeAverage"] = sum(timingDict[name]["compileTime"]) / len(timingDict[name]["compileTime"])
 
 # --- Plotting Section ---
 
 if not timingDict:
     print("No timing data found. Check your file contents and paths.")
 else:
-    # Sort the dictionary by the number of GPUs (keys)
     sorted_gpus = sorted(timingDict.keys(), key=lambda x: int(x.split("gpu")[0]))
     sorted_times = [timingDict[gpu]["average"] for gpu in sorted_gpus]
+    sorted_actualtimes = [timingDict[gpu]["actualTimeAverage"] for gpu in sorted_gpus]
+    sorted_compiletimes = [timingDict[gpu]["compileTimeAverage"] for gpu in sorted_gpus]
 
-    # Create the plot
     plt.figure(figsize=(8, 6))
 
-    # Plot actual execution times
     plt.plot(sorted_gpus, sorted_times, marker='o', linestyle='-', color='b', linewidth=2, markersize=8,
+             label='Total Time')
+
+    plt.plot(sorted_gpus, sorted_actualtimes, marker='o', linestyle='-', color='g', linewidth=2, markersize=8,
              label='Actual Time')
+
+    plt.plot(sorted_gpus, sorted_compiletimes, marker='o', linestyle='-', color='r', linewidth=2, markersize=8,
+             label='Compile Time')
 
     for gpu in sorted_gpus:
         plt.scatter(
@@ -66,22 +92,18 @@ else:
     ideal_time = sorted_times[0]
     plt.axhline(y=ideal_time, color='r', linestyle='--', linewidth=2, label='Ideal Weak Scaling')
 
-    # Formatting the plot nicely
     plt.xlabel('Number of GPUs', fontsize=12)
     plt.ylabel('Runtime (seconds)', fontsize=12)
     plt.title('Weak Scaling Performance', fontsize=14, fontweight='bold')
 
-    # Ensure x-axis ticks match your GPU counts exactly (e.g., 1, 2, 4, 8)
     plt.xticks(sorted_gpus)
 
-    # Set y-axis limits to start a bit below the lowest time to show the floor clearly
-    plt.ylim(bottom=min(sorted_times) * 0.8, top=max(sorted_times) * 1.2)
+    plt.ylim(bottom=0, top=max(sorted_times) * 1.2)
 
     plt.grid(True, which="both", linestyle="--", alpha=0.6)
     plt.legend(fontsize=11)
     plt.tight_layout()
 
-    # Save the plot to a file and display it
     plt.savefig('weak_scaling_plot.png', dpi=300)
     print("Plot saved as 'weak_scaling_plot_base-resolution_nx-ny2000_nt2000.png'")
     plt.show()
