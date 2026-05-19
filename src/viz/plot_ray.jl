@@ -10,8 +10,11 @@ GLMakie.activate!()
 script_dir = @__DIR__
 
 # const FRAME_DIR = normpath(joinpath(script_dir, "..", "..", "docs", "frames", "frames_topography"))
-const FRAME_DIR = normpath(joinpath(script_dir, "..", "..", "docs", "frames", "frames_topography_multi"))
-const OUT_DIR   = normpath(joinpath(script_dir, "..", "..", "docs", "true_multi_xpu_ray"))
+# const FRAME_DIR = normpath(joinpath(script_dir, "..", "..", "docs", "frames", "frames_topography_multi"))
+# const FRAME_DIR = normpath(joinpath(script_dir, "..", "..", "docs", "frames", "newtopo", "temp_downsampled_HD"))
+# const FRAME_DIR = normpath(joinpath(script_dir, "..", "..", "docs", "frames", "newtopoflat", "temp_downsampled_HD"))
+const FRAME_DIR = normpath(joinpath(script_dir, "..", "..", "docs", "frames", "topotest", "compressed_frames_HD"))
+const OUT_DIR   = normpath(joinpath(script_dir, "..", "..", "docs", "frames", "topotest"))
 
 mkpath(OUT_DIR)
 
@@ -42,7 +45,7 @@ const HEIGHT_SCALE = 0.35f0
 # 3. CAMERA KNOBS
 # =======================================================
 
-CAMERA_AZIMUTH = 0.70f0 * π + π / 2
+CAMERA_AZIMUTH = 0.70f0 * π + π / 2 + π
 const CAMERA_ELEVATION = 0.11f0 * π
 const CAMERA_PERSPECTIVE = 1.0f0
 
