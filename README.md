@@ -15,7 +15,7 @@ The main goal of this project is the development of **parallel 2D shallow-water 
 - CPU and reference implementations for verification,
 - visualization and post-processing scripts for generated simulation output.
 
-The numerical focus is a first-order finite-volume SWE solver with Rusanov fluxes, bottom topography, free-surface-based well-balancing, wet/dry stabilization, and an absorbing sponge layer. The software focus follows a similar workflow as the PorousConvection project from the first part of this course: start from a serial/reference formulation, port the solver to a single CPU/GPU backend with `ParallelStencil.jl`, and then extend it to distributed multi-XPU simulations with `ImplicitGlobalGrid.jl`.
+The numerical focus is a first-order finite-volume SWE solver with Rusanov fluxes following [1], bottom topography, and a free-surface-based well-balanced wet/dry treatment adapted from [3]. The solver further includes wet/dry stabilization and an absorbing sponge layer. Visualization and post-processing are based on ideas from [2]. The software focus follows a similar workflow as the PorousConvection project from the first part of this course: start from a serial/reference formulation, port the solver to a single CPU/GPU backend with `ParallelStencil.jl`, and then extend it to distributed multi-XPU simulations with `ImplicitGlobalGrid.jl`.
 
 ## Contents
 
@@ -25,16 +25,14 @@ The numerical focus is a first-order finite-volume SWE solver with Rusanov fluxe
 - [Setup](#wrench-setup)
 - [Run the simulations](#rocket-run-the-simulations)
 - [Repository structure](#package-repository-structure)
-- [1D SWE reference problems](#1d-swe-reference-problems)
-- [2D SWE baseline solver](#2d-swe-baseline-solver)
+- [Adding topography and extending to 2D](#adding-topography-and-extending-to-2d)
 - [2D SWE single-XPU solver](#2d-swe-single-xpu-solver)
 - [2D well-balanced SWE single-XPU solver](#2d-well-balanced-swe-single-xpu-solver)
-- [2D SWE multi-XPU solver](#2d-swe-multi-xpu-solver)
 - [2D well-balanced SWE multi-XPU solver](#2d-well-balanced-swe-multi-xpu-solver)
 - [Diagnostics, reference solutions, and testing](#white_check_mark-diagnostics-reference-solutions-and-testing)
 - [Visualization and output processing](#visualization-and-output-processing)
-- [Automatic documentation in Julia](#automatic-documentation-in-julia)
 - [Discussion and outlook](#discussion-and-outlook)
+- [References](#references)
 
 ---
 
@@ -103,76 +101,37 @@ $$
 The 2D SWE with fixed bathymetry are
 
 $$
-\partial_t h
-+
-\partial_x(hu)
-+
-\partial_y(hv)
-=
-0,
+\partial_t h + \partial_x(hu) + \partial_y(hv) = 0,
 $$
 
 $$
-\partial_t(hu)
-+
-\partial_x\left(hu^2 + \frac{1}{2}gh^2\right)
-+
-\partial_y(huv)
-=
--gh\,\partial_x z,
+\partial_t(hu) + \partial_x\left(hu^2 + \frac{1}{2}gh^2\right) + \partial_y(huv) = -gh\,\partial_x z,
 $$
 
 $$
-\partial_t(hv)
-+
-\partial_x(huv)
-+
-\partial_y\left(hv^2 + \frac{1}{2}gh^2\right)
-=
--gh\,\partial_y z.
+\partial_t(hv) + \partial_x(huv) + \partial_y\left(hv^2 + \frac{1}{2}gh^2\right) = -gh\,\partial_y z.
 $$
 
 In balance-law form,
 
 $$
-\partial_t U
-+
-\partial_x F(U)
-+
-\partial_y G(U)
-=
-S(U),
+\partial_t U + \partial_x F(U) + \partial_y G(U) = S(U),
 $$
 
 with
 
 $$
-F(U)
-=
-\begin{bmatrix}
-hu\\[1ex]
-hu\,u+\frac{1}{2}gh^2\\[1ex]
-hu\,v
-\end{bmatrix},
-\qquad
-G(U)
-=
-\begin{bmatrix}
-hv\\[1ex]
-hv\,u\\[1ex]
-hv\,v+\frac{1}{2}gh^2
-\end{bmatrix},
+F(U) = \begin{bmatrix} hu\, hu²+\frac{1}{2}gh^2, huv \end{bmatrix}, \qquad G(U) = \begin{bmatrix} hv, huv ,hv²+\frac{1}{2}gh^2 \end{bmatrix},
 $$
 
 and
 
 $$
-S(U)
-=
+S(U) =
 \begin{bmatrix}
-0\\[1ex]
--gh\,\partial_x z\\[1ex]
--gh\,\partial_y z
+0,
+-gh\partial_x z, 
+-gh\partial_y z
 \end{bmatrix}.
 $$
 
@@ -186,7 +145,7 @@ u=v=0,
 \eta=h+z=\text{constant}.
 $$
 
-A method is **well-balanced** if it preserves this equilibrium exactly, up to roundoff.
+A method is **well-balanced** if it preserves this equilibrium exactly, up to roundoff.[3]
 
 ---
 
@@ -198,8 +157,7 @@ The computational domain is divided into Cartesian cells.
 Each cell $(i,j)$ stores
 
 $$
-U_{i,j}
-=
+U_{i,j} =
 \begin{bmatrix}
 h_{i,j}\\
 (hu)_{i,j}\\
@@ -210,15 +168,7 @@ $$
 The explicit first-order finite-volume update is
 
 $$
-U^{n+1}_{i,j}
-=
-U^n_{i,j}
--
-\frac{\Delta t}{\Delta x}
-\left(
-F_{i+1/2,j}-F_{i-1/2,j}
-\right)
--
+U^{n+1}_{i,j} = U^n_{i,j} - \frac{\Delta t}{\Delta x} \left( F_{i+1/2,j}-F_{i-1/2,j} \right) -
 \frac{\Delta t}{\Delta y}
 \left(
 G_{i,j+1/2}-G_{i,j-1/2}
@@ -241,13 +191,7 @@ The implemented workflow uses:
 In the $x$-direction,
 
 $$
-\widehat{F}(U_L,U_R)
-=
-\frac{1}{2}
-\left[
-F(U_L)+F(U_R)
-\right]
--
+\widehat{F}(U_L,U_R) = \frac{1}{2} \left[ F(U_L)+F(U_R) \right] -
 \frac{1}{2}
 a_{\max}
 \left(
@@ -258,8 +202,7 @@ $$
 where
 
 $$
-a_{\max}
-=
+a_{\max} =
 \max
 \left(
 |u_L|+\sqrt{gh_L},
@@ -270,13 +213,7 @@ $$
 In the $y$-direction,
 
 $$
-\widehat{G}(U_L,U_R)
-=
-\frac{1}{2}
-\left[
-G(U_L)+G(U_R)
-\right]
--
+\widehat{G}(U_L,U_R) = \frac{1}{2} \left[ G(U_L)+G(U_R) \right] -
 \frac{1}{2}
 b_{\max}
 \left(
@@ -287,8 +224,7 @@ $$
 with
 
 $$
-b_{\max}
-=
+b_{\max} =
 \max
 \left(
 |v_L|+\sqrt{gh_L},
@@ -302,8 +238,7 @@ The explicit timestep is chosen from a CFL condition.
 A representative 2D form is
 
 $$
-\Delta t
-=
+\Delta t =
 \frac{\mathrm{CFL}}
 {
 \max_{i,j}
@@ -343,8 +278,7 @@ and evaluates interface water depths against a face bathymetry.
 At the $x$-interface $i+1/2,j$,
 
 $$
-z_{i+1/2,j}
-=
+z_{i+1/2,j} =
 \frac{z_{i,j}+z_{i+1,j}}{2},
 $$
 
@@ -355,14 +289,12 @@ $$
 $$
 
 $$
-h_L
-=
+h_L =
 \max\left(0,\eta_L-z_{i+1/2,j}\right),
 $$
 
 $$
-h_R
-=
+h_R =
 \max\left(0,\eta_R-z_{i+1/2,j}\right).
 $$
 
@@ -374,10 +306,8 @@ The core first-order replacement is
 
 $$
 \boxed{
-F_{1,i+1/2,j}
-=
-\frac{1}{2}\left[(hu)_L+(hu)_R\right]
--
+F_{1,i+1/2,j} =
+\frac{1}{2}\left[(hu)_L+(hu)_R\right] -
 \frac{1}{2}a_{i+1/2,j}(\eta_R-\eta_L)
 }
 $$
@@ -387,10 +317,8 @@ Similarly,
 
 $$
 \boxed{
-G_{1,i,j+1/2}
-=
-\frac{1}{2}\left[(hv)_L+(hv)_R\right]
--
+G_{1,i,j+1/2} =
+\frac{1}{2}\left[(hv)_L+(hv)_R\right] -
 \frac{1}{2}b_{i,j+1/2}(\eta_R-\eta_L)
 }.
 $$
@@ -442,16 +370,14 @@ $$
 The source terms are discretised as
 
 $$
-S^{(2)}_{i,j}
-=
+S^{(2)}_{i,j} =
 -g\,
 \frac{h_E+h_W}{2}
 \frac{z_E-z_W}{\Delta x},
 $$
 
 $$
-S^{(3)}_{i,j}
-=
+S^{(3)}_{i,j} =
 -g\,
 \frac{h_N+h_S}{2}
 \frac{z_N-z_S}{\Delta y}.
@@ -497,8 +423,7 @@ $$
 with
 
 $$
-\varepsilon_{\mathrm{vel}}
-=
+\varepsilon_{\mathrm{vel}} =
 \min(\Delta x,\Delta y)^4.
 $$
 
@@ -516,8 +441,7 @@ To prevent a cell from losing more water than it contains during one update, a f
 For cell $(i,j)$,
 
 $$
-R_{i,j}
-=
+R_{i,j} =
 \frac{
 \max(F_{1,E},0)+\max(-F_{1,W},0)
 }{\Delta x}
@@ -530,13 +454,10 @@ $$
 The local draining time is
 
 $$
-\Delta t^{\mathrm{drain}}_{i,j}
-=
+\Delta t^{\mathrm{drain}}_{i,j} =
 \begin{cases}
-\min\left(\Delta t,\dfrac{h_{i,j}}{R_{i,j}}\right),
-& R_{i,j}>0,\\[2ex]
-\Delta t,
-& R_{i,j}=0.
+\min\left(\Delta t,\dfrac{h_{i,j}}{R_{i,j}}\right), & \text{if } R_{i,j} > 0, \\
+\Delta t, & \text{if } R_{i,j} = 0.
 \end{cases}
 $$
 
@@ -641,6 +562,16 @@ The multi-XPU solver keeps the numerical structure of the single-XPU solver whil
 - distributed output workflow.
 
 This is the main scalability step of the project: the same SWE stencil kernels are used in a distributed-memory simulation workflow analogous to the multi-GPU porous-convection implementation.
+
+### Water Visualization
+
+Water surfaces are rendered from the simulated water height $h$ and bathymetry $z$, with the free surface defined as
+
+$$
+\eta = z + h.
+$$
+
+The visualization uses `GLMakie.jl` to render both the terrain and the water surface in 3D. The water shading is inspired by [2]: depth-dependent transparency and color tinting are combined with Beer–Lambert attenuation, a Schlick-type Fresnel reflection approximation, and simple specular highlights to improve the visual distinction between shallow and deep regions. Surface normals estimated from the free-surface geometry are used to modulate reflections and lighting.
 
 ## :wrench: Setup
 
@@ -767,7 +698,6 @@ Adapt resource requests, account settings, and module/uenv handling to the targe
 ## :package: Repository Structure
 
 ```bash
-├─ cache/                                  # Cached data or intermediate artifacts
 ├─ data/                                   # Input topography or wave-related data
 ├─ docs/                                   # Result figures, animations, and project documentation
 ├─ frames/                                 # Generated frame images or serialized frame data
@@ -780,32 +710,19 @@ Adapt resource requests, account settings, and module/uenv handling to the targe
 │ ├─ 1D_reference/                        # 1D SWE reference examples
 │ ├─ 1D_with_z/                           # 1D SWE with bottom topography
 │ ├─ 2d_with_z/                           # Baseline 2D SWE implementation with topography
-│ │ ├─ 2d_swe_absorbing.jl
-│ │ ├─ 2d_swe_redo.jl
-│ │ ├─ 2d_swe.jl
-│ │ └─ README.md
 │ ├─ viz/                                 # Visualization scripts
-│ │ ├─ plot_multi.jl
-│ │ └─ plot_ray.jl
 │ ├─ xpu/                                 # Parallel CPU/GPU and multi-XPU SWE solvers
-│ │ ├─ 2d_swe_absorbing_perf.jl
-│ │ ├─ 2d_swe_absorbing_xpu.jl
-│ │ ├─ 2d_swe_cpu.jl
 │ │ ├─ 2d_swe_multi_xpu_wb.jl
 │ │ ├─ 2d_swe_multi_xpu.jl
 │ │ ├─ 2d_swe_xpu_error_benchmark.jl
 │ │ ├─ 2d_swe_xpu_wb.jl
 │ │ ├─ 2d_swe_xpu.jl
 │ │ ├─ output_compression.jl
-│ │ └─ README.md
 │ └─ reference.jl                        # Auxiliary reference implementation
 ├─ .gitignore
 ├─ Manifest.toml
 ├─ Project.toml
-├─ README.md
-├─ swe1d.gif
-├─ test.txt
-└─ wb_paper.pdf
+└─ README.md
 ```
 
 **`src/xpu/`:** main implementation folder for the project.  
@@ -817,7 +734,7 @@ It contains the portable single-XPU scripts, the multi-XPU MPI variants, the wel
 
 **`docs/` and `frames/`:** generated results, saved plots, animations, and intermediate visualization data.
 
-## 1D SWE reference problems
+## Adding topography and extending to 2D
 
 The repository contains 1D shallow-water examples under
 
@@ -840,21 +757,12 @@ Typical 1D examples include:
 - visualization of $h$, $hu$, and the free surface $h+z$.
 
 ![swe_1d](swe1d.gif)
-
-## 2D SWE baseline solver
+*This animation visualizes the wave propagation from the `reference.jl` reference solution.*
 
 The baseline 2D solver is located in
 
 ```bash
 src/2d_with_z/
-```
-
-This folder contains non-XPU development variants of the 2D SWE solver with bottom topography, including:
-
-```bash
-2d_swe.jl
-2d_swe_redo.jl
-2d_swe_absorbing.jl
 ```
 
 These scripts provide the numerical baseline before moving to portable CPU/GPU kernels.  
@@ -864,10 +772,12 @@ They implement:
 - Rusanov fluxes,
 - explicit time integration,
 - bottom-topography source terms,
-- absorbing-boundary experiments,
 - direct visualization-oriented development.
 
 The baseline 2D implementation is useful for checking solver logic before studying the parallel XPU implementation.
+
+![swe_2d](docs/swe2d.gif)
+*This animation visualizes the 2D baseline `2d_swe.jl` with absorbing BC.* 
 
 ## 2D SWE single-XPU solver
 
@@ -875,13 +785,6 @@ The main non-well-balanced parallel solver is
 
 ```bash
 src/xpu/2d_swe_xpu.jl
-```
-
-Additional related scripts include
-
-```bash
-src/xpu/2d_swe_absorbing_xpu.jl
-src/xpu/2d_swe_absorbing_perf.jl
 ```
 
 The single-XPU solver ports the 2D SWE finite-volume workflow to `ParallelStencil.jl`.  
@@ -941,37 +844,6 @@ or
 
 ```bash
 bash run_files/run_2D_swe_xpu_wb.sh
-```
-
-## 2D SWE multi-XPU solver
-
-The distributed non-well-balanced version is
-
-```bash
-src/xpu/2d_swe_multi_xpu.jl
-```
-
-It extends the stencil-based SWE solver to multiple ranks/devices using `ImplicitGlobalGrid.jl`.  
-The global 2D domain is decomposed into subdomains; each rank updates its local piece and exchanges halo values with neighbours.
-
-### Multi-XPU additions
-
-- global Cartesian grid decomposition,
-- MPI-aware neighbour communication,
-- halo updates between subdomains,
-- global reductions where needed,
-- compatibility with scheduler-based HPC launches.
-
-### Run the multi-XPU solver
-
-```bash
-julia --project src/xpu/2d_swe_multi_xpu.jl
-```
-
-or
-
-```bash
-bash run_files/run_2D_swe_multi_xpu.sh
 ```
 
 ## 2D well-balanced SWE multi-XPU solver
@@ -1035,6 +907,20 @@ The verification strategy is built around the shared solver routines in `src/sol
 
 Our diagnostics focus on verifying the numerical building blocks before assessing complete benchmark simulations. In particular, we compare timestep updates, flux computations, and physically relevant verification cases to ensure that the implemented schemes behave as expected.
 
+For quantitative error analysis, we use the discrete $L^1$ and $L^\infty$ norms. Given a numerical solution $u_i$ and a reference solution $u_i^{\mathrm{ref}}$, the errors are defined as
+
+$$
+E_{L^1} = \Delta x \sum_i \left|u_i - u_i^{\mathrm{ref}}\right|,
+$$
+
+and
+
+$$
+E_{L^\infty} = \max_i \left|u_i - u_i^{\mathrm{ref}}\right|.
+$$
+
+The $L^1$ error measures the total accumulated deviation, while the $L^\infty$ error captures the largest pointwise discrepancy.
+
 ### Reference Solutions
 
 The reference-testing workflow starts from `src/1D_reference/reference.jl`, which contains the baseline 1D shallow-water solver provided by Prof. Ivan Utkin. This implementation is used as the primary reference for validating our sequential 1D shallow-water solver.
@@ -1043,11 +929,31 @@ The 1D solver with topography is reference-tested through the solver function in
 
 In addition, the 1D topography implementation is verified using the dam-break problem, where the numerical solution is compared against the analytical Riemann solution. This provides a physically interpretable benchmark beyond direct code-to-code comparison.
 
+![Dam_break](docs/dam_break_1d.gif)
+*Numerical solution of the one-dimensional dam-break problem compared with the analytical Riemann solution, showing the rarefaction wave and shock wave.*
+![Dam_break_error](docs/dam_break_error_2.png)
+* $L^1$ error for the one-dimensional dam-break benchmark, measuring the average deviation of the numerical solution from the analytical reference solution.*
+
 For the non-well-balanced 2D XPU implementation, verification is performed on the CPU backend. The most important kernel-level quantity, namely the numerical flux computation, is unit-tested against the corresponding sequential 2D solver. Random states are generated, the sequential solver computes the reference fluxes, and the XPU kernel fluxes are then compared component-wise at sampled grid locations.
 
 After establishing these checks for the non-well-balanced schemes, we introduced the well-balanced formulation. Its main verification case is the lake-at-rest configuration, where a stationary free surface over nontrivial topography should remain at rest. This test directly checks the defining property of the well-balanced scheme: the numerical balance between flux gradients and source terms.
 
-![Lake-at-rest verification error plot](docs/presi_docs/steady_state_fully_wet.png)
+![Fully_wet](docs/presi_docs/steady_state_fully_wet.png)
+*Initial condition and topography for the fully wet lake-at-rest benchmark.*
+
+![Fully_wet_error](docs/presi_docs/error_convergence_full_wet.png)
+*Error evolution for the fully wet lake-at-rest test. The well-balanced scheme preserves the steady state up to machine precision.*
+
+![Fully_wet_error_nonwb](docs/swe2d_topography_error_benchmark_non_wb.png)
+*Error evolution for the fully wet lake-at-rest test. The non-well-balanced scheme cannot preserve the steady state, no clear convergence eighter.*
+
+![wet_dry](docs/presi_docs/steady_state_sea_lvl.png)
+*Initial condition and topography for the partially wet lake-at-rest benchmark, including wet and dry regions.*
+
+![Dry_wet_error](docs/presi_docs/error_convergence_topography.png)
+*Error evolution for the partially wet benchmark. The steady state is not preserved exactly, but the well-balanced scheme shows convergent error behavior.*
+
+
 
 ### Testing
 
@@ -1109,3 +1015,11 @@ Natural extensions include:
 - systematic comparison of CPU, single-XPU, and multi-XPU results,
 - final figure and animation integration into `docs/`,
 - replacing placeholder GitHub URLs and documentation badges with the final repository metadata.
+
+
+## References
+
+1. E. F. Toro, *Riemann Solvers and Numerical Methods for Fluid Dynamics*, Springer, 2009.
+2. D. Swientek, *Interactive Visualization of Shallow Water Equation Solvers*, Bachelor’s thesis, Friedrich-Alexander-Universität Erlangen-Nürnberg, 2018.
+3. S. Hwang, P. J. Lynett, and S. Son, “A second-order well-balanced reconstruction for the shallow flows with wet/dry fronts,” *Computers and Mathematics with Applications*, vol. 208, pp. 33–54, 2026. doi: 10.1016/j.camwa.2026.01.036.
+4. Generative AI was used for plotting scripts, debugging and Documentation espacially README.md formatting and modifications.
