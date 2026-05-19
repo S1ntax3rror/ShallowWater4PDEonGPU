@@ -292,6 +292,129 @@ end
     return nothing
 end
 
+@inline function x_momentum_fluxes(h, hu, hv, z, max_speed_x, ix, iy, vel_eps, g)
+    hL = hx_L(h, z, ix, iy)
+    hR = hx_R(h, z, ix, iy)
+    uL = vel_u(h, hu, ix, iy, vel_eps)
+    uR = vel_u(h, hu, ix+1, iy, vel_eps)
+    vL = vel_v(h, hv, ix, iy, vel_eps)
+    vR = vel_v(h, hv, ix+1, iy, vel_eps)
+    
+    huL, huR = hL * uL, hR * uR
+    hvL, hvR = hL * vL, hR * vR
+    ax = max_speed_x[ix, iy]
+
+    F2 = 0.5 * (huL * uL + 0.5 * g * hL^2 + huR * uR + 0.5 * g * hR^2) - 0.5 * ax * (huR - huL)
+    F3 = 0.5 * (huL * vL + huR * vR) - 0.5 * ax * (hvR - hvL)
+    return F2, F3
+end
+
+@inline function y_momentum_fluxes(h, hu, hv, z, max_speed_y, ix, iy, vel_eps, g)
+    hL = hy_L(h, z, ix, iy)
+    hR = hy_R(h, z, ix, iy)
+    uL = vel_u(h, hu, ix, iy, vel_eps)
+    uR = vel_u(h, hu, ix, iy+1, vel_eps)
+    vL = vel_v(h, hv, ix, iy, vel_eps)
+    vR = vel_v(h, hv, ix, iy+1, vel_eps)
+    
+    huL, huR = hL * uL, hR * uR
+    hvL, hvR = hL * vL, hR * vR
+    ay = max_speed_y[ix, iy]
+
+    G2 = 0.5 * (hvL * uL + hvR * uR) - 0.5 * ay * (huR - huL)
+    G3 = 0.5 * (hvL * vL + 0.5 * g * hL^2 + hvR * vR + 0.5 * g * hR^2) - 0.5 * ay * (hvR - hvL)
+    return G2, G3
+end
+
+
+@parallel_indices (ix, iy) function pass1_mass_and_drain!(
+    F₁, G₁, dt_drain, 
+    h, hu, hv, z, max_speed_x, max_speed_y, g, dt, _dx, _dy, vel_eps
+)
+    nx, ny = size(h)
+
+    # Compute F1
+    if ix <= nx - 1 && iy <= ny
+        hL_x = hx_L(h, z, ix, iy); hR_x = hx_R(h, z, ix, iy)
+        ηL_x = eta(h, z, ix, iy);  ηR_x = eta(h, z, ix+1, iy)
+        uL = vel_u(h, hu, ix, iy, vel_eps); uR = vel_u(h, hu, ix+1, iy, vel_eps)
+        F₁[ix, iy] = 0.5 * (hL_x * uL + hR_x * uR) - 0.5 * max_speed_x[ix, iy] * (ηR_x - ηL_x)
+    end
+
+    # Compute G1
+    if ix <= nx && iy <= ny - 1
+        hL_y = hy_L(h, z, ix, iy); hR_y = hy_R(h, z, ix, iy)
+        ηL_y = eta(h, z, ix, iy);  ηR_y = eta(h, z, ix, iy+1)
+        vL = vel_v(h, hv, ix, iy, vel_eps); vR = vel_v(h, hv, ix, iy+1, vel_eps)
+        G₁[ix, iy] = 0.5 * (hL_y * vL + hR_y * vR) - 0.5 * max_speed_y[ix, iy] * (ηR_y - ηL_y)
+    end
+
+    return nothing
+end
+
+@parallel_indices (ix, iy) function pass1b_drain!(dt_drain, F₁, G₁, h, dt, _dx, _dy)
+    nx, ny = size(h)
+    if 2 <= ix <= nx-1 && 2 <= iy <= ny-1
+        out_x = max(F₁[ix, iy], 0.0) + max(-F₁[ix-1, iy], 0.0)
+        out_y = max(G₁[ix, iy], 0.0) + max(-G₁[ix, iy-1], 0.0)
+        drain_rate = out_x * _dx + out_y * _dy
+        dt_drain[ix, iy] = drain_rate > 0.0 ? min(dt, h[ix, iy] / drain_rate) : dt
+    end
+    return nothing
+end
+
+
+@parallel_indices (ix, iy) function pass2_fused_update!(
+    h2, hu2, hv2,                  # NEW State (Write)
+    h, hu, hv, z,                  # OLD State (Read)
+    F₁, G₁, dt_drain,              # Precomputed 
+    max_speed_x, max_speed_y, 
+    g, dt, _dx, _dy, vel_eps
+)
+    nx, ny = size(h)
+
+    if 2 <= ix <= nx-1 && 2 <= iy <= ny-1
+        # --- 1. Compute dtFx and dtGy strictly in local scalar memory ---
+        dtFx_E = F₁[ix, iy] > 0.0 ? min(dt, dt_drain[ix, iy]) : 
+                 (F₁[ix, iy] < 0.0 ? min(dt, dt_drain[ix+1, iy]) : dt)
+                 
+        dtFx_W = F₁[ix-1, iy] > 0.0 ? min(dt, dt_drain[ix-1, iy]) : 
+                 (F₁[ix-1, iy] < 0.0 ? min(dt, dt_drain[ix, iy]) : dt)
+                 
+        dtGy_N = G₁[ix, iy] > 0.0 ? min(dt, dt_drain[ix, iy]) : 
+                 (G₁[ix, iy] < 0.0 ? min(dt, dt_drain[ix, iy+1]) : dt)
+                 
+        dtGy_S = G₁[ix, iy-1] > 0.0 ? min(dt, dt_drain[ix, iy-1]) : 
+                 (G₁[ix, iy-1] < 0.0 ? min(dt, dt_drain[ix, iy]) : dt)
+
+        # --- 2. Update Height ---
+        h2[ix, iy] = h[ix, iy] - (
+            (F₁[ix, iy] * dtFx_E - F₁[ix-1, iy] * dtFx_W) * _dx +
+            (G₁[ix, iy] * dtGy_N - G₁[ix, iy-1] * dtGy_S) * _dy
+        )
+
+        # --- 3. Compute Momentum Fluxes On-The-Fly ---
+        F2_E, F3_E = x_momentum_fluxes(h, hu, hv, z, max_speed_x, ix, iy, vel_eps, g)
+        F2_W, F3_W = x_momentum_fluxes(h, hu, hv, z, max_speed_x, ix-1, iy, vel_eps, g)
+        
+        G2_N, G3_N = y_momentum_fluxes(h, hu, hv, z, max_speed_y, ix, iy, vel_eps, g)
+        G2_S, G3_S = y_momentum_fluxes(h, hu, hv, z, max_speed_y, ix, iy-1, vel_eps, g)
+
+        # --- 4. Source Terms ---
+        ηC = eta(h, z, ix, iy)
+        zE = 0.5*(z[ix, iy] + z[ix+1, iy]); zW = 0.5*(z[ix-1, iy] + z[ix, iy])
+        zN = 0.5*(z[ix, iy] + z[ix, iy+1]); zS = 0.5*(z[ix, iy-1] + z[ix, iy])
+        
+        hsrc_x = 0.5 * (max(0.0, ηC - zE) + max(0.0, ηC - zW))
+        hsrc_y = 0.5 * (max(0.0, ηC - zN) + max(0.0, ηC - zS))
+
+        # --- 5. Update Momentum ---
+        hu2[ix, iy] = hu[ix, iy] - dt * ( (F2_E - F2_W)*_dx + (G2_N - G2_S)*_dy + g*hsrc_x*(zE - zW)*_dx )
+        hv2[ix, iy] = hv[ix, iy] - dt * ( (F3_E - F3_W)*_dx + (G3_N - G3_S)*_dy + g*hsrc_y*(zN - zS)*_dy )
+    end
+    return nothing
+end
+
 @parallel_indices (ix, iy) function update_height_momentum!(
     h, hu, hv,
     F₁, G₁, F₂, F₃, G₂, G₃, dtFx, dtGy,
@@ -457,20 +580,27 @@ end
     return nothing
 end
 
-function benchmark_swe_loop!(nt, h, hu, hv, F₁, F₂, F₃, G₁, G₂, G₃, dtFx, dtGy, dt_drain, max_speed_x, max_speed_y, z, σ, g, vel_eps, _dx, _dy)
-    for it in 1:nt
+function benchmark_swe_loop!(nt, h2, hu2, hv2, h, hu, hv, F₁, G₁, dt_drain, max_speed_x, max_speed_y, z, σ, g, vel_eps, _dx, _dy)    for it in 1:nt
         @parallel compute_maxspeed!(max_speed_x, max_speed_y, h, hu, hv, z, g, vel_eps)
         dt = 0.99 / (maximum(max_speed_x) * _dx + maximum(max_speed_y) * _dy)
         
-        @parallel compute_1st_2nd_and_3th_flux!(F₁, F₂, F₃, G₁, G₂, G₃, hu, hv, h, z, g, max_speed_x, max_speed_y, vel_eps)
-        @parallel compute_draining_timestep!(dt_drain, F₁, G₁, h, dt, _dx, _dy)
-        @parallel compute_effective_flux_timesteps!(dtFx, dtGy, dt_drain, F₁, G₁, dt)
-        @parallel update_height_momentum!(h, hu, hv, F₁, G₁, F₂, F₃, G₂, G₃, dtFx, dtGy, z, g, dt, _dx, _dy)
+        # @parallel compute_1st_2nd_and_3th_flux!(F₁, F₂, F₃, G₁, G₂, G₃, hu, hv, h, z, g, max_speed_x, max_speed_y, vel_eps)
+        # @parallel compute_draining_timestep!(dt_drain, F₁, G₁, h, dt, _dx, _dy)
+        # @parallel compute_effective_flux_timesteps!(dtFx, dtGy, dt_drain, F₁, G₁, dt)
+        # @parallel update_height_momentum!(h, hu, hv, F₁, G₁, F₂, F₃, G₂, G₃, dtFx, dtGy, z, g, dt, _dx, _dy)
+        @parallel pass1_mass_and_drain!(F₁, G₁, dt_drain, h, hu, hv, z, max_speed_x, max_speed_y, g, dt, _dx, _dy, vel_eps)
+        @parallel pass1b_drain!(dt_drain, F₁, G₁, h, dt, _dx, _dy)
+        
+        @parallel pass2_fused_update!(h2, hu2, hv2, h, hu, hv, z, F₁, G₁, dt_drain, max_speed_x, max_speed_y, g, dt, _dx, _dy, vel_eps)        
         @parallel dry_cell_fix!(h, hu, hv, 1e-2)
         @parallel left_right_bc!(h, hu, hv, g, dt, _dx)
         @parallel bottom_top_bc!(h, hu, hv, g, dt, _dy)
         @parallel sponge_layer!(hu, hv, σ)
         @parallel dry_cell_fix!(h, hu, hv, 1e-2)
+
+        h, h2 = h2, h
+        hu, hu2 = hu2, hu
+        hv, hv2 = hv2, hv
     end
     
     @static if USE_GPU
@@ -528,14 +658,18 @@ end
     hu = @zeros(nx, ny)
     hv = @zeros(nx, ny)
 
-    # fluxes
+    h2  = @zeros(nx, ny)
+    hu2 = @zeros(nx, ny)
+    hv2 = @zeros(nx, ny)
+
+    # # fluxes
     F₁ = @zeros(nx - 1, ny)
-    F₂ = @zeros(nx - 1, ny)
-    F₃ = @zeros(nx - 1, ny)
+    # F₂ = @zeros(nx - 1, ny)
+    # F₃ = @zeros(nx - 1, ny)
 
     G₁ = @zeros(nx, ny - 1)
-    G₂ = @zeros(nx, ny - 1)
-    G₃ = @zeros(nx, ny - 1)
+    # G₂ = @zeros(nx, ny - 1)
+    # G₃ = @zeros(nx, ny - 1)
 
     max_speed_x = @zeros(nx - 1, ny)
     max_speed_y = @zeros(nx, ny - 1)
@@ -569,8 +703,8 @@ end
 
     dt_drain = @zeros(nx, ny)
 
-    dtFx = @zeros(nx - 1, ny)
-    dtGy = @zeros(nx, ny - 1)
+    # dtFx = @zeros(nx - 1, ny)
+    # dtGy = @zeros(nx, ny - 1)
 
     # -------------------------------------------------------------------------
     # sponge layer
@@ -614,12 +748,12 @@ end
     println("--- Performance Analysis ($nx x $ny grid, $nt iterations) ---")
         
     # Warmup
-    benchmark_swe_loop!(10, h, hu, hv, F₁, F₂, F₃, G₁, G₂, G₃, dtFx, dtGy, dt_drain, max_speed_x, max_speed_y, z, σ, g, vel_eps, _dx, _dy)
-    
+    # benchmark_swe_loop!(10, h, hu, hv, F₁, F₂, F₃, G₁, G₂, G₃, dtFx, dtGy, dt_drain, max_speed_x, max_speed_y, z, σ, g, vel_eps, _dx, _dy)
+    benchmark_swe_loop!(10, h2, hu2, hv2, h, hu, hv, F₁, G₁, dt_drain, max_speed_x, max_speed_y, z, σ, g, vel_eps, _dx, _dy)
+
     # Measure execution time
     println("Benchmarking main loop...")
-    t_total = @belapsed benchmark_swe_loop!($nt, $h, $hu, $hv, $F₁, $F₂, $F₃, $G₁, $G₂, $G₃, $dtFx, $dtGy, $dt_drain, $max_speed_x, $max_speed_y, $z, $σ, $g, $vel_eps, $_dx, $_dy)
-    
+    t_total = @belapsed benchmark_swe_loop!($nt, $h2, $hu2, $hv2, $h, $hu, $hv, $F₁, $G₁, $dt_drain, $max_speed_x, $max_speed_y, $z, $σ, $g, $vel_eps, $_dx, $_dy)    
     # Calculate metrics
     t_it = t_total / nt  # Time per iteration
     
