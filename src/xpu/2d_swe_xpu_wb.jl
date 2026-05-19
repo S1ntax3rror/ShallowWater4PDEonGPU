@@ -27,7 +27,7 @@ end
 using Printf
 
 const h_eps = 1e-2
-const nt_nx_multiplier = 2
+const nt_nx_multiplier = 4
 
 @inline avx_comp(hv1, hv2, h, ix, iy) = 0.5 * (hv1[ix, iy] * hv2[ix, iy] / h[ix, iy] + hv1[ix+1, iy] * hv2[ix+1, iy] / h[ix+1, iy])
 @inline avy_comp(hv1, hv2, h, ix, iy) = 0.5 * (hv1[ix, iy] * hv2[ix, iy] / h[ix, iy] + hv1[ix, iy+1] * hv2[ix, iy+1] / h[ix, iy+1])
@@ -569,19 +569,28 @@ function build_topography(xs, ys; islands=Island[], background=nothing)
     return z
 end
 
-function load_topography_data(domain_expansion_factor, nx_aoi_ext, ny_aoi_ext)
+function load_topography_data(domain_expansion_factor, nx_aoi_ext, ny_aoi_ext, xs, ys)
     # base_file = "data/tsunamiOku/D112-94-50m.txt"
     # wave_file = "data/tsunamiOku/I112-94-50m-17a.txt"
     
     # spacing = 50
     # nx_aoi, ny_aoi = 112, 94 # ENSURE THIS MATCHES THE DATA FILES
 
-    base_file = "data/tsunamiOku/D379-687-450m.txt"
-    wave_file = "data/tsunamiOku/I379-687-450m-17a.txt"
+    # base_file = "data/tsunamiOku/D379-687-450m.txt"
+    # wave_file = "data/tsunamiOku/I379-687-450m-17a.txt"
+
+    # # ENSURE THIS MATCHES THE DATA FILES
+    # spacing = 450
+    # nx_aoi, ny_aoi = 379, 687 
+
+    base_file = "data/tsunamiOku/D154-124-150m.txt"
+    wave_file = "data/tsunamiOku/I154-124-150m-17a.txt"
 
     # ENSURE THIS MATCHES THE DATA FILES
-    spacing = 450
-    nx_aoi, ny_aoi = 379, 687 
+    spacing = 50
+    nx_aoi, ny_aoi = 154, 124
+
+
 
     # Read as string, split by whitespace, and parse to Float64
     read_values(filename) = parse.(Float64, split(read(filename, String)))
@@ -657,6 +666,15 @@ function load_topography_data(domain_expansion_factor, nx_aoi_ext, ny_aoi_ext)
 
             # Alternatively, stretch the wave data outwards -> Huge watermass just like in a tsunami scenario
             η0_expanded[i, j] = η0_inner[orig_i, orig_j]
+
+            # position in x and y
+            x_pos = xs[i]
+            y_pos = ys[j]
+
+            if y_pos < -2200.0 
+                η0_expanded[i, j] += 20.0
+            end
+
         end
     end
 
@@ -670,10 +688,10 @@ end
 # -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
-@views function swe2d_topography_frames(; nt=0, nx_aoi=125, ny_aoi=125, domain_expansion_factor=3, outdir = "frames", do_viz = true, force_array_output=false, perf_test=false, debug_roi=false)
+@views function swe2d_topography_frames(; nt=0, nx_aoi=250, ny_aoi=250, domain_expansion_factor=3, outdir = "frames", do_viz = true, force_array_output=false, perf_test=false, debug_roi=false)
     # physics and numerics
-    lx_aoi = 379 * 450 # aoi = area of interest
-    ly_aoi = 687 * 450 
+    lx_aoi = 154 * 50 # aoi = area of interest
+    ly_aoi = 124 * 50 
 
     # Multiply domain size to allow for sponge layer and BCs
     domain_expansion_factor = 3
@@ -687,7 +705,7 @@ end
         nt = Int(nt_nx_multiplier * nx_aoi)
     end
 
-    nvis = 25
+    nvis = 5
 
     dx = lx / (nx - 1)
     dy = ly / (ny - 1)
@@ -778,7 +796,7 @@ end
     # z, η0 = load_topography_data(domain_expansion_factor, nx_aoi, ny_aoi)
 
     if !perf_test
-        z, η0, lx_aoi, ly_aoi= load_topography_data(domain_expansion_factor, nx_aoi, ny_aoi)
+        z, η0, lx_aoi, ly_aoi= load_topography_data(domain_expansion_factor, nx_aoi, ny_aoi, xs, ys)
     else
         z_cpu  = zeros(nx, ny)
         η0_cpu = zeros(nx, ny)
@@ -803,7 +821,8 @@ end
 
 
     # wet/dry sea level steady state
-    # η0 .= 0
+    # η0 .= 0.0
+
 
     # # add a gaussian bump to the initial condition to generate some wave activity
     # x_c     = -10.0    # X center of the spike
@@ -1091,16 +1110,13 @@ end
     return Linf_abs
 end
 
-# swe2d_topography_frames(125, 125;
-#     outdir = "docs/frames/frames_topography",
-#     do_viz = true,
-#     force_array_output = true
-# )
+swe2d_topography_frames(;
+    outdir = "docs/frames/frames_topography",
+    do_viz = true,
+    force_array_output = true
+)
 
 
-# Warmup run to compile everything before the performance test:
-swe2d_topography_frames(nt=4000, nx_aoi=4000, ny_aoi=4000, domain_expansion_factor=2, 
-                                    do_viz=true, force_array_output=false, perf_test=false, debug_roi=false)
 
 # # Performance test:
 # for n in [100, 250, 500, 1000, 1500, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000]

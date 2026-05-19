@@ -491,15 +491,7 @@ end
     return rel_err
 end
 
-N = [50, 100, 200, 400, 800, 1600]
-reps = size(N,1)
-errs = zeros(reps)
-
-
-for i in 1:reps
-    error = swe2d_topography_frames(N[i], N[i])
-    errs[i] = error
-    println("Finished Size: ", N[i])
-end
-
-print("The errors: ", errs)
+swe2d_topography_frames(125, 125; 
+    outdir = "frames", 
+    do_viz = true
+)
