@@ -625,8 +625,8 @@ end
     
     # A_eff = (2 * D_u + 1 * D_k) * nx * ny * sizeof(Float64) / 1e9 (to get GB)
     # D_u = h, hu, hv, F1-3, G1-3, dtFx, dtGy, dt_drain, max_speed_x, max_speed_y
-    # D_k = z, 
-    A_eff = (2 * 14 + 1) * (nx * ny) * sizeof(Float64) / 1e9 
+    # D_k = z, σ
+    A_eff = (2 * 14 + 2) * (nx * ny) * sizeof(Float64) / 1e9 
     
     T_eff = A_eff / t_it
     
