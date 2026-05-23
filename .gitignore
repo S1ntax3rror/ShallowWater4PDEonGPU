@@ -6,5 +6,5 @@ docs/multi_xpu_ray/
 docs/true_multi_xpu_ray/
 cache/
 src/xpu/2d_swe_xpu_wb\ remaining_flatt_test.jl
-scalingResults/old
-scalingResults/.idea/
+plotting/.idea/
+plotting/old/

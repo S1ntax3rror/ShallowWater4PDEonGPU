@@ -97,7 +97,7 @@ else:
     # Plot ideal weak scaling (horizontal line based on the 1-GPU/smallest-GPU run)
 
     plt.xlabel('Number of GPUs', fontsize=12)
-    plt.ylabel('Runtime (seconds)', fontsize=12)
+    plt.ylabel('(runtime/runtime single gpu)', fontsize=12)
     plt.title('Weak Scaling Performance', fontsize=14, fontweight='bold')
 
     plt.xticks(sorted_gpus)

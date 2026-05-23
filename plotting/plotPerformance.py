@@ -2,7 +2,7 @@ import os
 import matplotlib.pyplot as plt
 
 # Point this to the file containing your raw stdout data
-filename = "perfdata.txt"
+filename = "perfdata_iterating.txt"
 
 timingDict = {}
 current_res = None
@@ -48,7 +48,7 @@ else:
 
     # Plot avg
     plt.plot(sorted_res, sorted_times, marker='o', linestyle='-', color='b', linewidth=2, markersize=8,
-             label='Min Time')
+             label='Min percentage')
 
     # Plot measurements
     for res in sorted_res:
@@ -63,7 +63,7 @@ else:
 
     plt.xlabel('Grid Resolution (N for N x N)', fontsize=12)
     plt.ylabel('Percentage of Peak (4000 GB/s)', fontsize=12)
-    plt.title('Strong Scaling / Performance Scaling', fontsize=14, fontweight='bold')
+    plt.title('Performance plot ', fontsize=14, fontweight='bold')
 
     plt.xticks(sorted_res, rotation=45)
 
