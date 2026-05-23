@@ -1,0 +1,66 @@
+--- Performance Analysis (100 x 100 grid, 1000 iterations) ---
+Benchmarking main loop...
+Avg Time per iteration (t_it): 0.00022 s
+Effective Memory Access (A_eff): 0.0024 GB
+Effective Memory Throughput (T_eff): 10.98 GB/s
+Percentage of Peak: 0.27%
+--- Performance Analysis (250 x 250 grid, 1000 iterations) ---
+Benchmarking main loop...
+Avg Time per iteration (t_it): 0.00024 s
+Effective Memory Access (A_eff): 0.015 GB
+Effective Memory Throughput (T_eff): 63.08 GB/s
+Percentage of Peak: 1.58%
+--- Performance Analysis (500 x 500 grid, 1000 iterations) ---
+Benchmarking main loop...
+Avg Time per iteration (t_it): 0.00037 s
+Effective Memory Access (A_eff): 0.06 GB
+Effective Memory Throughput (T_eff): 163.61 GB/s
+Percentage of Peak: 4.09%
+--- Performance Analysis (750 x 750 grid, 1000 iterations) ---
+Benchmarking main loop...
+Avg Time per iteration (t_it): 0.0006 s
+Effective Memory Access (A_eff): 0.135 GB
+Effective Memory Throughput (T_eff): 224.97 GB/s
+Percentage of Peak: 5.62%
+--- Performance Analysis (1000 x 1000 grid, 1000 iterations) ---
+Benchmarking main loop...
+Avg Time per iteration (t_it): 0.00084 s
+Effective Memory Access (A_eff): 0.24 GB
+Effective Memory Throughput (T_eff): 286.29 GB/s
+Percentage of Peak: 7.16%
+--- Performance Analysis (2500 x 2500 grid, 1000 iterations) ---
+Benchmarking main loop...
+Avg Time per iteration (t_it): 0.00348 s
+Effective Memory Access (A_eff): 1.5 GB
+Effective Memory Throughput (T_eff): 430.88 GB/s
+Percentage of Peak: 10.77%
+--- Performance Analysis (5000 x 5000 grid, 1000 iterations) ---
+Benchmarking main loop...
+Avg Time per iteration (t_it): 0.01244 s
+Effective Memory Access (A_eff): 6.0 GB
+Effective Memory Throughput (T_eff): 482.23 GB/s
+Percentage of Peak: 12.06%
+--- Performance Analysis (7500 x 7500 grid, 1000 iterations) ---
+Benchmarking main loop...
+Avg Time per iteration (t_it): 0.02763 s
+Effective Memory Access (A_eff): 13.5 GB
+Effective Memory Throughput (T_eff): 488.66 GB/s
+Percentage of Peak: 12.22%
+--- Performance Analysis (10000 x 10000 grid, 1000 iterations) ---
+Benchmarking main loop...
+Avg Time per iteration (t_it): 0.04905 s
+Effective Memory Access (A_eff): 24.0 GB
+Effective Memory Throughput (T_eff): 489.26 GB/s
+Percentage of Peak: 12.23%
+--- Performance Analysis (15000 x 15000 grid, 1000 iterations) ---
+Benchmarking main loop...
+Avg Time per iteration (t_it): 0.10718 s
+Effective Memory Access (A_eff): 54.0 GB
+Effective Memory Throughput (T_eff): 503.8 GB/s
+Percentage of Peak: 12.6%
+--- Performance Analysis (20000 x 20000 grid, 1000 iterations) ---
+Benchmarking main loop...
+Avg Time per iteration (t_it): 0.19559 s
+Effective Memory Access (A_eff): 96.0 GB
+Effective Memory Throughput (T_eff): 490.82 GB/s
+Percentage of Peak: 12.27%

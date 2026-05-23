@@ -1006,30 +1006,19 @@ end
     # -------------------------------------------------------------------------
 
     dt = 0.0
-    local_dt = 0.0
 
     for it in 1:nt
         @parallel compute_maxspeed!(max_speed_x, max_speed_y, h, hu, hv, z, g, vel_eps)
         
         if 0.99 / (maximum(max_speed_x) * _dx + maximum(max_speed_y) * _dy) < dt 
-            println("Warning: Local dt = ", 0.99 / (maximum(max_speed_x) * _dx + maximum(max_speed_y) * _dy), " is smaller than current dt = ", dt, " at iteration ", it)
+            println("Warning: Local dt = ", 0.99 / (maximum(max_speed_x) * _dx + maximum(max_speed_y) * _dy), " is bigger than the current CLF, at iteration ", it)
         end
 
-        if it % 10 == 0 || it == 1 || local_dt < dt
+        if it % 10 == 0 || it == 1
             dt =  0.9 / (max_g(max_speed_x) * _dx + max_g(max_speed_y) * _dy)
         end
 
         time += dt
-
-        
-        # if it % 10 == 0 || it == 1
-        #     vote_dt = 0.9 / (local_max_sx * _dx + local_max_sy * _dy)
-        # else
-        #     vote_dt = min(0.99 / (local_max_sx * _dx + local_max_sy * _dy), dt)
-        # end
-        
-        # dt = MPI.Allreduce(vote_dt, MPI.MIN, comm)
-
 
         if !isfinite(dt)
             error("Non-finite dt at iteration $it: dt=$dt, max_sx=$(maximum(max_speed_x)), max_sy=$(maximum(max_speed_y))")
@@ -1041,16 +1030,17 @@ end
             hu, hv, h, z, g,
             max_speed_x, max_speed_y, vel_eps
         )
-
-        @parallel compute_draining_timestep!(
-            dt_drain,
-            F₁, G₁,
-            h,
-            dt,
-            _dx, _dy
-        )
-        update_halo!(dt_drain)
-
+        @hide_communication b_width begin
+            @parallel compute_draining_timestep!(
+                dt_drain,
+                F₁, G₁,
+                h,
+                dt,
+                _dx, _dy
+            )
+            update_halo!(dt_drain)
+        end
+        
         @parallel compute_effective_flux_timesteps!(
             dtFx, dtGy,
             dt_drain,

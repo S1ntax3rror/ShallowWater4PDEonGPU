@@ -1,0 +1,72 @@
+Global grid: 8002x8002x1 (nprocs: 16, dims: 4x4x1; device support: CUDA-aware)
+Global domain size (including halos): 8000 x 8000
+MPI topology: 4 x 4
+Local domain size (including halos): 2002 x 2002
+Time steps: 2000
+
+Simulation completed.
+Total simulation time: 1.33 seconds
+ 43.584271 seconds (76.72 M allocations: 4.128 GiB, 10.62% gc time, 60.13% compilation time: 19% of which was recompilation)
+ 43.121231 seconds (77.15 M allocations: 4.138 GiB, 10.77% gc time, 61.30% compilation time: 18% of which was recompilation)
+ 43.098953 seconds (76.76 M allocations: 4.129 GiB, 10.91% gc time, 60.64% compilation time: 19% of which was recompilation)
+ 43.080111 seconds (76.72 M allocations: 4.127 GiB, 11.25% gc time, 60.81% compilation time: 18% of which was recompilation)
+ 43.304373 seconds (77.13 M allocations: 4.138 GiB, 10.59% gc time, 60.07% compilation time: 19% of which was recompilation)
+ 43.484344 seconds (76.73 M allocations: 4.128 GiB, 11.08% gc time, 60.33% compilation time: 18% of which was recompilation)
+ 43.718979 seconds (77.53 M allocations: 4.147 GiB, 10.87% gc time, 60.41% compilation time: 18% of which was recompilation)
+ 43.528209 seconds (77.16 M allocations: 4.139 GiB, 10.68% gc time, 60.07% compilation time: 18% of which was recompilation)
+ 42.273280 seconds (77.13 M allocations: 4.138 GiB, 11.27% gc time, 61.27% compilation time: 19% of which was recompilation)
+ 43.651164 seconds (77.15 M allocations: 4.138 GiB, 11.00% gc time, 60.26% compilation time: 18% of which was recompilation)
+ 42.983781 seconds (77.14 M allocations: 4.138 GiB, 10.99% gc time, 60.75% compilation time: 19% of which was recompilation)
+ 42.617769 seconds (77.15 M allocations: 4.138 GiB, 11.14% gc time, 60.81% compilation time: 19% of which was recompilation)
+ 42.200259 seconds (77.53 M allocations: 4.147 GiB, 11.58% gc time, 63.01% compilation time: 18% of which was recompilation)
+ 43.760727 seconds (77.15 M allocations: 4.138 GiB, 11.19% gc time, 60.07% compilation time: 18% of which was recompilation)
+ 42.135616 seconds (77.53 M allocations: 4.147 GiB, 11.55% gc time, 63.20% compilation time: 18% of which was recompilation)
+ 42.972661 seconds (77.53 M allocations: 4.147 GiB, 11.22% gc time, 60.41% compilation time: 19% of which was recompilation)
+Global grid: 8002x8002x1 (nprocs: 16, dims: 4x4x1; device support: CUDA-aware)
+Global domain size (including halos): 8000 x 8000
+MPI topology: 4 x 4
+Local domain size (including halos): 2002 x 2002
+Time steps: 2000
+
+Simulation completed.
+Total simulation time: 1.33 seconds
+ 45.777752 seconds (76.70 M allocations: 4.126 GiB, 10.08% gc time, 56.80% compilation time: 19% of which was recompilation)
+ 45.548981 seconds (76.73 M allocations: 4.130 GiB, 10.30% gc time, 56.57% compilation time: 18% of which was recompilation)
+ 47.939953 seconds (77.14 M allocations: 4.138 GiB, 9.56% gc time, 53.45% compilation time: 18% of which was recompilation)
+ 46.639522 seconds (77.15 M allocations: 4.138 GiB, 9.94% gc time, 56.92% compilation time: 18% of which was recompilation)
+ 46.742199 seconds (77.14 M allocations: 4.138 GiB, 9.87% gc time, 55.73% compilation time: 18% of which was recompilation)
+ 47.062906 seconds (77.16 M allocations: 4.138 GiB, 9.51% gc time, 54.60% compilation time: 19% of which was recompilation)
+ 46.593437 seconds (77.14 M allocations: 4.138 GiB, 10.08% gc time, 56.37% compilation time: 18% of which was recompilation)
+ 45.887519 seconds (77.15 M allocations: 4.139 GiB, 10.29% gc time, 56.26% compilation time: 18% of which was recompilation)
+ 47.416794 seconds (77.13 M allocations: 4.138 GiB, 9.99% gc time, 54.81% compilation time: 20% of which was recompilation)
+ 46.388088 seconds (77.53 M allocations: 4.147 GiB, 10.36% gc time, 55.29% compilation time: 18% of which was recompilation)
+ 46.536772 seconds (77.15 M allocations: 4.138 GiB, 10.26% gc time, 56.17% compilation time: 18% of which was recompilation)
+ 45.467086 seconds (77.53 M allocations: 4.147 GiB, 10.41% gc time, 57.06% compilation time: 18% of which was recompilation)
+ 46.102463 seconds (77.52 M allocations: 4.147 GiB, 10.38% gc time, 56.26% compilation time: 18% of which was recompilation)
+ 46.015528 seconds (76.75 M allocations: 4.129 GiB, 10.56% gc time, 57.53% compilation time: 18% of which was recompilation)
+ 46.311571 seconds (76.73 M allocations: 4.128 GiB, 10.26% gc time, 56.22% compilation time: 19% of which was recompilation)
+ 47.497113 seconds (77.55 M allocations: 4.148 GiB, 9.98% gc time, 54.02% compilation time: 19% of which was recompilation)
+Global grid: 8002x8002x1 (nprocs: 16, dims: 4x4x1; device support: CUDA-aware)
+Global domain size (including halos): 8000 x 8000
+MPI topology: 4 x 4
+Local domain size (including halos): 2002 x 2002
+Time steps: 2000
+
+Simulation completed.
+Total simulation time: 1.33 seconds
+ 43.555149 seconds (76.73 M allocations: 4.127 GiB, 10.60% gc time, 59.22% compilation time: 18% of which was recompilation)
+ 43.148783 seconds (76.71 M allocations: 4.127 GiB, 10.72% gc time, 60.37% compilation time: 19% of which was recompilation)
+ 42.553924 seconds (76.72 M allocations: 4.127 GiB, 11.01% gc time, 61.91% compilation time: 18% of which was recompilation)
+ 43.133026 seconds (77.16 M allocations: 4.139 GiB, 10.74% gc time, 60.43% compilation time: 19% of which was recompilation)
+ 43.732975 seconds (77.53 M allocations: 4.147 GiB, 10.75% gc time, 58.95% compilation time: 19% of which was recompilation)
+ 42.639310 seconds (76.76 M allocations: 4.129 GiB, 11.32% gc time, 62.08% compilation time: 18% of which was recompilation)
+ 41.938942 seconds (77.15 M allocations: 4.138 GiB, 11.28% gc time, 62.54% compilation time: 18% of which was recompilation)
+ 41.443555 seconds (77.14 M allocations: 4.138 GiB, 11.30% gc time, 63.41% compilation time: 18% of which was recompilation)
+ 42.659709 seconds (77.15 M allocations: 4.138 GiB, 11.04% gc time, 60.02% compilation time: 19% of which was recompilation)
+ 42.873768 seconds (77.13 M allocations: 4.138 GiB, 10.96% gc time, 61.31% compilation time: 19% of which was recompilation)
+ 42.010922 seconds (77.13 M allocations: 4.138 GiB, 11.26% gc time, 61.68% compilation time: 19% of which was recompilation)
+ 43.103497 seconds (77.53 M allocations: 4.147 GiB, 11.02% gc time, 60.50% compilation time: 18% of which was recompilation)
+ 42.819591 seconds (77.13 M allocations: 4.138 GiB, 11.15% gc time, 60.91% compilation time: 18% of which was recompilation)
+ 43.465526 seconds (77.14 M allocations: 4.138 GiB, 10.50% gc time, 59.45% compilation time: 18% of which was recompilation)
+ 41.577801 seconds (77.54 M allocations: 4.148 GiB, 11.61% gc time, 63.42% compilation time: 18% of which was recompilation)
+ 42.064219 seconds (77.53 M allocations: 4.147 GiB, 11.48% gc time, 62.07% compilation time: 19% of which was recompilation)
