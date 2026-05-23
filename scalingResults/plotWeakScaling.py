@@ -1,7 +1,8 @@
 import os
 import matplotlib.pyplot as plt
 
-files = os.listdir("outFiles/weak2")
+dirname = "outFiles/weak3"
+files = os.listdir(dirname)
 
 timingDict = {}
 
@@ -10,7 +11,7 @@ for f in files:
     if "swe_xpu" in f:
         continue
 
-    lines = open(os.path.join("outFiles/weak2", f)).readlines()
+    lines = open(os.path.join(dirname, f)).readlines()
 
     rep = 0
     sum_timings = 0.0

@@ -1,0 +1,30 @@
+Global grid: 4000x2000x1 (nprocs: 2, dims: 2x1x1; device support: CUDA-aware)
+Global domain size (including halos): 4000 x 2000
+MPI topology: 2 x 1
+Local domain size (including halos): 2001 x 2000
+Time steps: 2000
+
+Simulation completed.
+Total simulation time: 3.65 seconds
+ 44.108263 seconds (76.38 M allocations: 4.133 GiB, 15.65% gc time, 63.48% compilation time: 19% of which was recompilation)
+ 44.406845 seconds (76.43 M allocations: 4.134 GiB, 17.58% gc time, 62.58% compilation time: 17% of which was recompilation)
+Global grid: 4000x2000x1 (nprocs: 2, dims: 2x1x1; device support: CUDA-aware)
+Global domain size (including halos): 4000 x 2000
+MPI topology: 2 x 1
+Local domain size (including halos): 2001 x 2000
+Time steps: 2000
+
+Simulation completed.
+Total simulation time: 3.65 seconds
+ 40.678426 seconds (76.43 M allocations: 4.135 GiB, 12.66% gc time, 66.61% compilation time: 18% of which was recompilation)
+ 40.120229 seconds (76.39 M allocations: 4.133 GiB, 12.94% gc time, 68.16% compilation time: 18% of which was recompilation)
+Global grid: 4000x2000x1 (nprocs: 2, dims: 2x1x1; device support: CUDA-aware)
+Global domain size (including halos): 4000 x 2000
+MPI topology: 2 x 1
+Local domain size (including halos): 2001 x 2000
+Time steps: 2000
+
+Simulation completed.
+Total simulation time: 3.65 seconds
+ 41.263672 seconds (76.40 M allocations: 4.133 GiB, 12.97% gc time, 66.25% compilation time: 18% of which was recompilation)
+ 40.599490 seconds (76.42 M allocations: 4.134 GiB, 12.78% gc time, 67.77% compilation time: 18% of which was recompilation)

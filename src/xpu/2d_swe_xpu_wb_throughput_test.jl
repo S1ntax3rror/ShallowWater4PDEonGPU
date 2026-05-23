@@ -641,13 +641,15 @@ end
 end
 
 for dim in [100, 250, 500, 750, 1000, 2500, 5000, 7500, 10000]
-
-    swe2d_topography_frames(;
-        outdir = "docs/frames/frames_topography",
-        do_viz = true,
-        force_array_output = true,
-        nt = 50, nx_aoi=dim, ny_aoi=dim
-    )
+    for iter in [1, 2, 3]
+        println("---------- iter ", iter, " --------------")
+        swe2d_topography_frames(;
+            outdir = "docs/frames/frames_topography",
+            do_viz = true,
+            force_array_output = true,
+            nt = 50, nx_aoi=dim, ny_aoi=dim
+        )
+    end
 end
 
 

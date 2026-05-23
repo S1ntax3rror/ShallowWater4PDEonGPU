@@ -2,7 +2,7 @@ import os
 import matplotlib.pyplot as plt
 
 # Point this to the file containing your raw stdout data
-filename = "outFiles/swe_xpu.3463869.o"
+filename = "perfdata.txt"
 
 timingDict = {}
 current_res = None
@@ -17,18 +17,18 @@ else:
 
 # Parse the data
 for line in lines:
-    if "Running performance test at resolution:" in line:
-        res_str = line.split("resolution:")[1].split("x")[0].strip()
+    if "Performance Analysis" in line:
+        res_str = line.lstrip("--- Performance Analysis (").split("x")[0].strip()
         current_res = int(res_str)
 
         if current_res not in timingDict:
             timingDict[current_res] = {"measurements": [], "average": 0.0}
 
-    elif "seconds (" in line and current_res is not None:
-        timing_str = line.split("seconds")[0].strip()
-        timing = float(timing_str)
+    elif "Percentage" in line and current_res is not None:
+        percentage = line.lstrip("Percentage of Peak: ").strip().rstrip("%").strip()
+        perc = float(percentage)
 
-        timingDict[current_res]["measurements"].append(timing)
+        timingDict[current_res]["measurements"].append(perc)
         current_res = None
 
     # --- Plotting Section ---
@@ -39,17 +39,16 @@ else:
     valid_resolutions = [res for res in timingDict.keys() if len(timingDict[res]["measurements"]) > 0]
 
     for res in valid_resolutions:
-        timingDict[res]["average"] = sum(timingDict[res]["measurements"]) / len(timingDict[res]["measurements"])
+        timingDict[res]["min"] = min(timingDict[res]["measurements"])
 
     sorted_res = sorted(valid_resolutions)
-    sorted_times = [timingDict[res]["average"] for res in sorted_res]
+    sorted_times = [timingDict[res]["min"] for res in sorted_res]
 
     plt.figure(figsize=(9, 6))
-    plt.yscale('log')
 
     # Plot avg
     plt.plot(sorted_res, sorted_times, marker='o', linestyle='-', color='b', linewidth=2, markersize=8,
-             label='Average Time')
+             label='Min Time')
 
     # Plot measurements
     for res in sorted_res:
@@ -63,12 +62,12 @@ else:
         )
 
     plt.xlabel('Grid Resolution (N for N x N)', fontsize=12)
-    plt.ylabel('Runtime (seconds)', fontsize=12)
+    plt.ylabel('Percentage of Peak (4000 GB/s)', fontsize=12)
     plt.title('Strong Scaling / Performance Scaling', fontsize=14, fontweight='bold')
 
     plt.xticks(sorted_res, rotation=45)
 
-    plt.ylim(bottom=0, top=max(sorted_times) * 1.1)
+    plt.ylim(bottom=0, top=100.0)
 
     plt.grid(True, which="both", linestyle="--", alpha=0.6)
     plt.legend(fontsize=11)
