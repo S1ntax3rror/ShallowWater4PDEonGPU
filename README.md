@@ -17,6 +17,8 @@ The main goal of this project is the development of **parallel 2D shallow-water 
 
 The numerical focus is a first-order finite-volume SWE solver with Rusanov fluxes following [1], bottom topography, and a free-surface-based well-balanced wet/dry treatment adapted from [3]. The solver further includes wet/dry stabilization and an absorbing sponge layer. Visualization and post-processing are based on ideas from [2]. The software focus follows a similar workflow as the PorousConvection project from the first part of this course: start from a serial/reference formulation, port the solver to a single CPU/GPU backend with `ParallelStencil.jl`, and then extend it to distributed multi-XPU simulations with `ImplicitGlobalGrid.jl`.
 
+The final solver are `src/xpu/2d_swe_xpu_wb.jl` and `src/xpu/2d_swe_multi_xpu_wb.jl`. For those extensive documentation is provided.
+
 ## Contents
 
 - [Introduction](#introduction)
