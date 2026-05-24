@@ -384,7 +384,7 @@ $$
 
 In the fully wet lake-at-rest case, this discrete source treatment cancels the hydrostatic pressure imbalance.
 
-### Wet/dry stabilization
+### Wet/dry velocity stabilization
 
 Near shorelines, direct division
 
@@ -461,6 +461,21 @@ $$
 $$
 
 Outgoing face fluxes use the draining timestep of the upwind donor cell.
+
+### Limitations of the current well-balanced wet/dry treatment
+
+For wet/dry fronts, however, the current implementation should be interpreted as a partial WB treatment rather than the full method from the paper. The code reconstructs the free surface and uses a draining timestep to prevent cells from losing more water than they contain, but it does not yet implement the full wet/dry reconstruction and correction procedure required for exact well-balancing near shorelines.
+
+Our current method is therefore expected to be well-balanced for fully wet lake-at-rest configurations, but not necessarily for wet/dry lake-at-rest states. To obtain the full wet/dry WB property, the following extensions would be required:
+
+1. Store or reconstruct bathymetry consistently at cell interfaces, rather than relying only on simple linear interpolation from cell centers.
+2. Add the wet/dry cell classification used in the paper: dry, fully flooded and partially flooded cells.
+3. Implement the reconstruction correction for partially flooded cells, where the reconstructed water surface is redistributed or clipped against the interface bathymetry.
+4. Use direction-dependent wet/dry information in two dimensions, since a cell may behave differently in the x- and y-directions when the bathymetry gradients differ.
+5. Couple the corrected reconstruction with the source discretization so that the hydrostatic momentum flux and bed-slope source term cancel also in partially flooded cells.
+6. Keep the draining timestep as a positivity-preserving stabilization, but do not treat it as sufficient by itself for full wet/dry well-balancing.
+
+Thus, the present implementation should be described as a simplified positivity-preserving and well-balanced scheme for the fully wet case, with partial wet/dry stabilization.
 
 ### Absorbing sponge layer
 
@@ -862,7 +877,7 @@ Natural extensions include:
 
 - stronger formal test coverage,
 - second-order reconstruction and slope limiting,
-- higher-order wet/dry treatment,
+- fully wet/dry treatment to complete WB also for partial wet simulations(as mentioned in the nummerical methods WB part),
 - systematic comparison of CPU, single-XPU, and multi-XPU results,
 - testing the solver on Swiss topography and bathimetry
 - enabling full memory usage when loading topographies on multi-XPU
