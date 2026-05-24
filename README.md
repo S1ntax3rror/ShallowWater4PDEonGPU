@@ -513,7 +513,7 @@ The multi-XPU solver is essentially the XPU solver but it utilizes the ImplicitG
 
 It essentially splits up the full domain into similar sized subdomains and distributes them such that each GPU and or CPU receives one subdomain.
 
-Neighbour exchanges are handled via update halo from ImplicitGlobalGrid. We use the @hide_communication pattern for both halo updates however the first halo exchange is most likely still producing communication overhead as the kernel is too small to hide all communication. 
+Neighbour exchanges are handled via update_halo from ImplicitGlobalGrid. We use the @hide_communication pattern for both halo updates however the first halo exchange is most likely still producing communication overhead as the kernel is too small to hide all communication. 
 
 The timestep requires a reduction which causes some communication overhead. To reduce this a conservative timestep is chosen every 10 timesteps and used for the next 10 timesteps. Should the timestep for any subdomain require to become larger than the 0.99*CLF condition a warning will be printed. This warning never showed up in any of our simulations. If this shows up the conservative timestep is still chosen too large and should be reduced slightly more.
 
@@ -639,7 +639,7 @@ To run at fullscale use the slurm scripts provided.
 
 ## Documentation for each script
 
-As stated in the introduction, this project followed the approach of the Porousconvection project from the first part of this course closely. This means that we started of on a 1D version. After validation of the 1D version we extended it to a 2D version. The 2D version was then ported to XPU and multi-XPU for the final scripts. As our first solver did not preserve the steady state we implemented a second XPU version with the well-balanced (wb) scheme.
+As stated in the introduction, this project followed the approach of the Porousconvection project from the first part of this course closely. This means that we started off on a 1D version. After validation of the 1D version we extended it to a 2D version. The 2D version was then ported to XPU and multi-XPU for the final scripts. As our first solver did not preserve the steady state we implemented a second XPU version with the well-balanced (wb) scheme.
 
 ### Adding topography and extending to 2D
 
@@ -648,9 +648,9 @@ src/1D_reference/
 src/1D_with_z/
 ```
 
-The reference script was the starting point for us. Based on this we implemented our first solver which is the 1D_with_z version that contains a z layer allowing to set a bathometry and topography.
+The reference script was the starting point for us. Based on this we implemented our first solver which is the 1D_with_z version that contains a z layer allowing to set a bathymetry and topography.
 
-This version was used to validate our solver agains analytical solutions using the classical dam-break example.
+This version was used to validate our solver against analytical solutions using the classical dam-break example.
 
 ![dam-break](docs/animations/Validation/dam_break_1d.gif)
 *Dam break comparing analytical version vs our numeric solver.*
@@ -661,7 +661,7 @@ Next we extended the 1d version to 2d which is located at
 src/2d_with_z/
 ```
 
-This coordinate extension required to introduce x and y fluxes and splitting the state into h(water height), hv(momentum x) and hu(momentum y).
+This coordinate extension required introducing x and y fluxes and splitting the state into h(water height), hv(momentum x) and hu(momentum y).
 
 <video src="docs/animations/Validation/2d_swe_topo.mp4" controls="controls" muted="muted" autoplay="autoplay" loop="loop" playsinline="playsinline" style="max-width: 100%;">
   Your browser does not support the video tag.
@@ -698,7 +698,7 @@ This is a `ParallelStencil.jl` implementation of the above described well-balanc
 
 In order to asses how well our solver is capable of utilizing the available memory bandwidth, we applied the performance analysis technique presented in [lecture 7 of the first part of this course](https://pde-on-gpu.vaw.ethz.ch/lecture7/). We do only reach 12.5% of the available 4000 GB/s memory bandwidth. Check the performance plot below. 
 
-When comparing to the lecture we can see that the kernels used there were much smaller than the ones we require and those kernels reached about 50% of the maximum throughput. Based on this we do believe that reaching 20-30% of maximum througput is possible but would require massive restructuring of the kernels. 
+When comparing to the lecture we can see that the kernels used there were much smaller than the ones we require and those kernels reached about 50% of the maximum throughput. Based on this we do believe that reaching 20-30% of maximum throughput is possible but would require massive restructuring of the kernels. 
 
 Right now we start many smaller kernels. We believe that this causes some overhead. This could be addressed by merging some of our Kernels together however if the Kernels become too large other issues start to show up. We attempted to do this but in the end this only made performance worse and as we can simulate 20000x20000 gridpoints for thousands of time-steps withing minutes (seconds on multi-GPU) we rather focused our resources on visualization, importing, terrain generation and MULTI-GPU. Note that at 20000x20000 gridpoints the memory limit is almost reached on single GPU.
 
@@ -747,9 +747,9 @@ finalize_global_grid()
 
 #### Scaling analysis
 
-In order to asses how well our multi-gpu version is scaling, we compared the minimum runtime on single GPU to the minimum runtime on x GPUs. Each GPU received a 2000x2000 domain meaning we apply a standart weakscaling analysis. Check the Weak Scaling Performance plot for reference. The dashed line shows how optimal scaling would look like.
+In order to asses how well our multi-gpu version is scaling, we compared the minimum runtime on single GPU to the minimum runtime on x GPUs. Each GPU received a 2000x2000 domain meaning we apply a standard weakscaling analysis. Check the Weak Scaling Performance plot for reference. The dashed line shows how optimal scaling would look like.
 
-The Weak Scaling plot shows that up to 8 GPUs the scaling works almost perfect. For 64 GPUs the runtime increased to 1.25x which is suboptimal. We believe this stems from the first halo update which we attempt to hide behinde a small kernel update. This kernel is likely too small to cover the full communication which causes some overhead for larger amounts of GPUs. At 32 GPUs our runtime increased to 1.75x which is surprising. We are not sure why this happens but it might be due to the MPI domain layout.
+The Weak Scaling plot shows that up to 8 GPUs the scaling works almost perfect. For 64 GPUs the runtime increased to 1.25x which is suboptimal. We believe this stems from the first halo update which we attempt to hide behind a small kernel update. This kernel is likely too small to cover the full communication which causes some overhead for larger amounts of GPUs. At 32 GPUs our runtime increased to 1.75x which is surprising. We are not sure why this happens but it might be due to the MPI domain layout.
 
 ![Performance analysis](docs/final_presentation_docs/weak_scaling_plot_dt.png)
 
