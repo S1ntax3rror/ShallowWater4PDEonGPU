@@ -678,10 +678,7 @@ src/2d_with_z/
 
 This coordinate extension required introducing x and y fluxes and splitting the state into h(water height), hv(momentum x) and hu(momentum y).
 
-<video src="docs/animations/Validation/2d_swe_topo.mp4" controls="controls" muted="muted" autoplay="autoplay" loop="loop" playsinline="playsinline" style="max-width: 100%;">
-  Your browser does not support the video tag.
-</video>
-
+![2D topography simulation](docs/animations/Validation/2d_swe_topo.gif)
 *This animation shows the output of `2d_swe.jl`.* 
 
 ### 2D SWE single-XPU solver
@@ -718,7 +715,7 @@ When comparing to the lecture we can see that the kernels used there were much s
 Right now we start many smaller kernels. We believe that this causes some overhead. This could be addressed by merging some of our Kernels together however if the Kernels become too large other issues start to show up. We attempted to do this but in the end this only made performance worse and as we can simulate 20000x20000 gridpoints for thousands of time-steps withing minutes (seconds on multi-GPU) we rather focused our resources on visualization, importing, terrain generation and MULTI-GPU. Note that at 20000x20000 gridpoints the memory limit is almost reached on single GPU.
 
 ![Performance analysis](docs/final_presentation_docs/performance_plot.png)
-
+*Maximum memory bandwidth reached for grid resolution NxN vs the theoretical peak. Check `src/xpu/2d_swe_xpu_wb_throughput_test.jl for reference.* 
 
 ### 2D well-balanced SWE multi-XPU solver
 
@@ -767,6 +764,7 @@ In order to asses how well our multi-gpu version is scaling, we compared the min
 The Weak Scaling plot shows that up to 8 GPUs the scaling works almost perfect. For 64 GPUs the runtime increased to 1.25x which is suboptimal. We believe this stems from the first halo update which we attempt to hide behind a small kernel update. This kernel is likely too small to cover the full communication which causes some overhead for larger amounts of GPUs. At 32 GPUs our runtime increased to 1.75x which is surprising. We are not sure why this happens but it might be due to the MPI domain layout.
 
 ![Performance analysis](docs/final_presentation_docs/weak_scaling_plot_dt.png)
+*Weak scaling performance of the wb multi-gpu version. Each GPU received a 2000x2000 domain to keep the workload steady. Check `run_files/weak_scaling.sh` for reference.*
 
 ## Diagnostics, Reference Solutions, and Testing
 
@@ -863,6 +861,23 @@ julia --project src/viz/plot_multi.jl
 julia --project src/viz/plot_ray.jl
 julia --project src/xpu/output_compression.jl
 ```
+
+## Galery
+![gauss vs TOPO1](docs/animations/QualityVisualizations/NewTopo1_Gauss.gif)
+*Gauss wave vs [Topo1](data/tsunamiOku/D112-94-50m.txt)*
+
+![Topo1](docs/animations/QualityVisualizations/Topo1.gif)
+*Tsunami wave vs [Topo1](data/tsunamiOku/D112-94-50m.txt)*
+
+![Topo2](docs/animations/QualityVisualizations/Topo2.gif)
+*Large wave in [Topo2](data/tsunamiOku/D154-124-150m.txt)*
+
+![Topo3](docs/animations/QualityVisualizations/Topo3.gif)
+*(Beautiful) Numerical problems in [Topo3](data/tsunamiOku/D379-687-450m.txt)*
+
+![Dam Break](docs/animations/QualityVisualizations/Dam.gif)
+*Huge dam break scenario*
+
 
 ## Discussion and outlook
 
