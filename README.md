@@ -481,39 +481,24 @@ Its role is to reduce artificial boundary reflections when waves propagate away 
 
 ### ParallelStencil.jl: single-XPU implementation
 
-The core parallel 2D implementations are located in `src/xpu/`.  
-The single-XPU scripts use
+Find the parallel 2D implementations at `src/xpu/`.
 
+To enable GPU utilization set 
 ```julia
-using ParallelStencil
-using ParallelStencil.FiniteDifferences2D
+USE_GPU=true
 ```
 
-and initialize either a CPU threading backend or a GPU backend:
+We use the parallel stencil library to easily switch between CPU and GPU version (XPU implementation).
 
-```julia
-@static if USE_GPU
-    @init_parallel_stencil(CUDA, Float64, 2, inbounds=false)
-else
-    @init_parallel_stencil(Threads, Float64, 2, inbounds=false)
-end
-```
-
-The numerical work is expressed through stencil-friendly parallel kernels using macros such as
+Most of the work is done in parallel kernels structured as
 
 ```julia
 @parallel_indices (ix, iy) function kernel!(...)
-    ...
+    do_work()
 end
 ```
 
-This makes the update sequence portable between:
-
-- threaded CPU execution,
-- GPU execution,
-- performance-oriented benchmarking variants.
-
-The well-balanced single-XPU code includes parallel kernels for:
+The well-balanced XPU code includes parallel kernels for:
 
 - interface wave-speed computation,
 - Rusanov flux evaluation,
@@ -525,43 +510,13 @@ The well-balanced single-XPU code includes parallel kernels for:
 
 ### ImplicitGlobalGrid.jl: multi-XPU implementation
 
-The multi-XPU solver extends the same stencil-based workflow to distributed runs.  
-It uses
+The multi-XPU solver is essentially the XPU solve but it utilizes the ImplicitGlobalGrid and MPI libraries and the spongelayer was removed.
 
-```julia
-using ImplicitGlobalGrid
-import MPI
-```
+It essentially splits up the full domain into similar sized subdomains and distributes them such that each GPU and or CPU receives one subdomain.
 
-and initializes a decomposed global grid through
+Neighbour exchanges are handled via update halo from ImplicitGlobalGrid. We use the @hide_communication pattern for both halo updates however the first halo exchange is most likely still producing communication overhead as the kernel is too small to hide all communication. 
 
-```julia
-me, dims, nprocs, coords, comm_cart =
-    init_global_grid(nx, ny, 1; select_device=false)
-```
-
-Each MPI rank evolves its local subdomain.  
-Neighbour exchanges are handled through halo communication, e.g.
-
-```julia
-update_halo!(h, hu, hv)
-```
-
-and the global setup is finalized through
-
-```julia
-finalize_global_grid()
-```
-
-The multi-XPU solver keeps the numerical structure of the single-XPU solver while adding:
-
-- Cartesian process topology,
-- global index helpers,
-- halo exchange of conserved fields,
-- MPI reductions for global diagnostics/timestep data,
-- distributed output workflow.
-
-This is the main scalability step of the project: the same SWE stencil kernels are used in a distributed-memory simulation workflow analogous to the multi-GPU porous-convection implementation.
+The timestep requires a reduction which causes some communication overhead. To reduce this a conservative timestep is chosen every 10 timesteps and used for the next 10 timesteps. Should the timestep need to become larger than the 0.99*CLF condition a warning will be printed.
 
 ### Water Visualization
 
@@ -602,7 +557,7 @@ The repository contains additional implementation notes in:
 
 These can document solver-specific settings and script-level workflows.
 
-## :rocket: Run the simulations
+## Run the simulations
 
 ### Local Julia execution
 
@@ -626,22 +581,7 @@ julia --project src/xpu/2d_swe_cpu.jl
 
 ### Provided shell scripts
 
-The `run_files/` folder contains wrapper scripts for the main workflows:
-
-```bash
-run_files/
-├─ run_2D_swe_compression.sh
-├─ run_2D_swe_multi_xpu.sh
-├─ run_2D_swe_xpu_wb.sh
-└─ run_2D_swe_xpu.sh
-```
-
-These scripts are intended to provide a reproducible entry point for:
-
-- standard single-XPU runs,
-- well-balanced single-XPU runs,
-- distributed multi-XPU runs,
-- output/compression workflows.
+The `run_files/` folder slurm scripts. Check the README in that folder for more information.
 
 ### Single-XPU workflow
 
@@ -666,42 +606,20 @@ julia --project src/xpu/2d_swe_xpu_wb.jl
 
 ### Multi-XPU workflow
 
-The distributed runs use the multi-XPU scripts:
+To test locally use:
 
 ```bash
-julia --project src/xpu/2d_swe_multi_xpu.jl
-julia --project src/xpu/2d_swe_multi_xpu_wb.jl
+mpiexecjl -n 8 julia --project src/xpu/2d_swe_multi_xpu_wb.jl --nx 100 --ny 100 
 ```
 
-On an MPI-enabled environment, these should be launched through the appropriate MPI or scheduler command, or through the repository wrapper script:
-
-```bash
-bash run_files/run_2D_swe_multi_xpu.sh
-```
-
-### Example cluster-style launch
-
-A cluster launch can follow the same conceptual structure as the PorousConvection multi-XPU workflow:
-
-```bash
-export MPICH_GPU_SUPPORT_ENABLED=1
-export IGG_CUDAAWARE_MPI=1
-export JULIA_CUDA_USE_COMPAT=false
-
-srun -N <nodes> -n <tasks> --ntasks-per-node=<tasks-per-node> \
-     --gpus-per-task=1 \
-     julia --project src/xpu/2d_swe_multi_xpu_wb.jl
-```
-
-Adapt resource requests, account settings, and module/uenv handling to the target machine.
+To run at fullscale use the slurm scripts provided.
 
 ## :package: Repository Structure
 
 ```bash
 ├─ data/                                   # Input topography or wave-related data
-├─ docs/                                   # Result figures, animations, and project documentation
-├─ frames/                                 # Generated frame images or serialized frame data
-├─ run_files/                              # Shell entry points for main simulations
+├─ docs/                                   # Result figures, animations, and presentation related
+├─ run_files/                              # Slurm scripts
 │ ├─ run_2D_swe_compression.sh
 │ ├─ run_2D_swe_multi_xpu.sh
 │ ├─ run_2D_swe_xpu_wb.sh
@@ -725,59 +643,31 @@ Adapt resource requests, account settings, and module/uenv handling to the targe
 └─ README.md
 ```
 
-**`src/xpu/`:** main implementation folder for the project.  
-It contains the portable single-XPU scripts, the multi-XPU MPI variants, the well-balanced variants, and benchmark/output utilities.
-
-**`run_files/`:** shell scripts for reproducible runs, including the multi-XPU workflow.
-
-**`src/viz/`:** post-processing and visualization scripts for generated output.
-
-**`docs/` and `frames/`:** generated results, saved plots, animations, and intermediate visualization data.
-
 ## Adding topography and extending to 2D
-
-The repository contains 1D shallow-water examples under
 
 ```bash
 src/1D_reference/
 src/1D_with_z/
 ```
 
-These lower-dimensional scripts serve as accessible reference problems for:
+The reference script was the starting point for us. Based on this we implemented our first solver which is the 1D_with_z version that contains a z layer for
 
-- validating the conservative finite-volume update,
-- studying wave propagation,
-- understanding bottom-topography source terms,
-- comparing against exact or semi-analytical benchmark behaviour.
+This version was used to check validate our solver agains analytical solutions using the classical dam-break example.
 
-Typical 1D examples include:
+![dam-break](docs/animations/Validation/dam_break_1d.gif)
+*Dam break comparing analytical version vs our numeric solver.*
 
-- a dam-break-type benchmark,
-- propagation over non-flat bottom topography,
-- visualization of $h$, $hu$, and the free surface $h+z$.
-
-![swe_1d](swe1d.gif)
+![swe_1d](docs/animations/Validation/swe1d.gif)
 *This animation visualizes the wave propagation from the `reference.jl` reference solution.*
 
-The baseline 2D solver is located in
+Next we extended the 1d version to 2d which is located at
 
 ```bash
 src/2d_with_z/
 ```
 
-These scripts provide the numerical baseline before moving to portable CPU/GPU kernels.  
-They implement:
-
-- 2D shallow-water dynamics,
-- Rusanov fluxes,
-- explicit time integration,
-- bottom-topography source terms,
-- direct visualization-oriented development.
-
-The baseline 2D implementation is useful for checking solver logic before studying the parallel XPU implementation.
-
-![swe_2d](docs/swe2d.gif)
-*This animation visualizes the 2D baseline `2d_swe.jl` with absorbing BC.* 
+![swe_2d](docs/animations/Validation/2d_swe_topo.mp4)
+*This animation shows the output of `2d_swe.jl` with absorbing BC.* 
 
 ## 2D SWE single-XPU solver
 

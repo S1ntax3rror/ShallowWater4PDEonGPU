@@ -8,6 +8,8 @@ Use them on the via
 sbatch run_files/runfile-name
 ```
 
+Note that you need a running julia uenv as described here: https://pde-on-gpu.vaw.ethz.ch/software_install/
+
 ## compression
 Specify the correct folder in the run_2D_swe_compression.sh script and it will compress all array output in that file to a single tar.gz with seleced resolution e.g. HD
 
