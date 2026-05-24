@@ -745,6 +745,14 @@ and at the end,
 finalize_global_grid()
 ```
 
+#### Scaling analysis
+
+In order to asses how well our multi-gpu version is scaling, we compared the minimum runtime on single GPU to the minimum runtime on x GPUs. Each GPU received a 2000x2000 domain meaning we apply a standart weakscaling analysis. Check the Weak Scaling Performance plot for reference. The dashed line shows how optimal scaling would look like.
+
+The Weak Scaling plot shows that up to 8 GPUs the scaling works almost perfect. For 64 GPUs the runtime increased to 1.25x which is suboptimal. We believe this stems from the first halo update which we attempt to hide behinde a small kernel update. This kernel is likely too small to cover the full communication which causes some overhead for larger amounts of GPUs. At 32 GPUs our runtime increased to 1.75x which is surprising. We are not sure why this happens but it might be due to the MPI domain layout.
+
+![Performance analysis](docs/final_presentation_docs/weak_scaling_plot_dt.png)
+
 ## Diagnostics, Reference Solutions, and Testing
 
 The verification strategy is built around the shared solver routines in `src/solvers.jl`. For the sequential 1D and 2D implementations, the solver functions defined there are called at every timestep of a simulation and perform the full state update. These routines therefore provide the central reference point for our diagnostics and testing.
@@ -844,7 +852,7 @@ julia --project src/xpu/output_compression.jl
 ## Discussion and outlook
 
 - The main achievement of this project is the transition from baseline SWE implementations to **parallel single-XPU and multi-XPU solvers** following the same development philosophy as the PorousConvection project.
-- `ParallelStencil.jl` enables a compact implementation of the core finite-volume update that can run on both CPU threads and GPUs.
+- `ParallelStencil.jl` enables a compact implementation of the core finite-volume update that can run on both CPU and GPU.
 - `ImplicitGlobalGrid.jl` extends the same solver structure to distributed-memory domain decomposition with halo exchange and MPI reductions.
 - The well-balanced wet/dry treatment addresses an essential physical issue of SWE simulations over non-flat bathymetry: preserving lake-at-rest equilibria and avoiding unstable shoreline behaviour.
 - The absorbing-domain setup makes the solver more suitable for wave-propagation experiments where reflections from the outer boundary should be reduced.
@@ -853,13 +861,11 @@ julia --project src/xpu/output_compression.jl
 Natural extensions include:
 
 - stronger formal test coverage,
-- quantitative performance/scaling studies for single- and multi-XPU runs,
 - second-order reconstruction and slope limiting,
 - higher-order wet/dry treatment,
 - systematic comparison of CPU, single-XPU, and multi-XPU results,
-- final figure and animation integration into `docs/`,
-- replacing placeholder GitHub URLs and documentation badges with the final repository metadata.
-
+- testing the solver on Swiss topography and bathimetry
+- enabling full memory usage when loading topographies on multi-XPU
 
 ## References
 
