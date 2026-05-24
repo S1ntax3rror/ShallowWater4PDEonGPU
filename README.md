@@ -19,6 +19,9 @@ The numerical focus is a first-order finite-volume SWE solver with Rusanov fluxe
 
 The final solver are `src/xpu/2d_swe_xpu_wb.jl` and `src/xpu/2d_swe_multi_xpu_wb.jl`. For those extensive documentation is provided.
 
+![Gauss example anim](/docs/animations/QualityVisualizations/NewTopo1_Gauss.gif)
+*Example for a final output of a simulation and visualization run*
+
 ## Contents
 
 - [Introduction](#introduction)
