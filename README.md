@@ -7,7 +7,7 @@
 This repository is the final project for the course *Solving partial differential equations in parallel on GPUs II* at ETH Zürich.  
 Authors: *Ramura Gassler (rgassler@ethz.ch), Jiri Käser (jikaeser@ethz.ch)*.
 
-The main goal of this project is the development of **parallel 2D shallow-water equation (SWE) solvers** in Julia:
+The main goal of this project is the development of **parallel 2D shallow-water equation (SWE) solvers** in Julia. The final repo includes:
 
 - a **single-XPU** implementation using [`ParallelStencil.jl`](https://github.com/omlins/ParallelStencil.jl), running on CPUs or GPUs from one code base,
 - a **multi-XPU** implementation using [`ImplicitGlobalGrid.jl`](https://github.com/eth-cscs/ImplicitGlobalGrid.jl), extending the solver to domain-decomposed MPI runs,
@@ -22,14 +22,15 @@ The numerical focus is a first-order finite-volume SWE solver with Rusanov fluxe
 - [Introduction](#introduction)
 - [Physical model](#physical-model)
 - [Numerical method and parallelisation](#numerical-method-and-parallelisation)
-- [Setup](#wrench-setup)
-- [Run the simulations](#rocket-run-the-simulations)
+- [Setup](#setup)
+- [Run the simulations](#run-the-simulations)
 - [Repository structure](#package-repository-structure)
+- [Documentation for each script](#documentation-for-each-script)
 - [Adding topography and extending to 2D](#adding-topography-and-extending-to-2d)
 - [2D SWE single-XPU solver](#2d-swe-single-xpu-solver)
 - [2D well-balanced SWE single-XPU solver](#2d-well-balanced-swe-single-xpu-solver)
 - [2D well-balanced SWE multi-XPU solver](#2d-well-balanced-swe-multi-xpu-solver)
-- [Diagnostics, reference solutions, and testing](#white_check_mark-diagnostics-reference-solutions-and-testing)
+- [Diagnostics, reference solutions, and testing](#diagnostics-reference-solutions-and-testing)
 - [Visualization and output processing](#visualization-and-output-processing)
 - [Discussion and outlook](#discussion-and-outlook)
 - [References](#references)
@@ -63,9 +64,7 @@ This project therefore has two tightly connected goals:
    - stencil-style kernels written once and executed on different backends,
    - multi-XPU domain decomposition through `ImplicitGlobalGrid.jl`,
    - halo exchange and global reductions for distributed simulations,
-   - shell scripts for local and cluster-oriented execution.
-
-The repository also contains smaller 1D solvers and reference scripts. These are useful for understanding and validating the shallow-water discretisation before studying the full parallel 2D implementations.
+   - shell scripts cluster execution. 
 
 ## Physical model
 
@@ -510,13 +509,13 @@ The well-balanced XPU code includes parallel kernels for:
 
 ### ImplicitGlobalGrid.jl: multi-XPU implementation
 
-The multi-XPU solver is essentially the XPU solve but it utilizes the ImplicitGlobalGrid and MPI libraries and the spongelayer was removed.
+The multi-XPU solver is essentially the XPU solver but it utilizes the ImplicitGlobalGrid and MPI libraries. The sponge layer was removed as rendering large domains is not a problem when using multi-GPU.
 
 It essentially splits up the full domain into similar sized subdomains and distributes them such that each GPU and or CPU receives one subdomain.
 
 Neighbour exchanges are handled via update halo from ImplicitGlobalGrid. We use the @hide_communication pattern for both halo updates however the first halo exchange is most likely still producing communication overhead as the kernel is too small to hide all communication. 
 
-The timestep requires a reduction which causes some communication overhead. To reduce this a conservative timestep is chosen every 10 timesteps and used for the next 10 timesteps. Should the timestep need to become larger than the 0.99*CLF condition a warning will be printed.
+The timestep requires a reduction which causes some communication overhead. To reduce this a conservative timestep is chosen every 10 timesteps and used for the next 10 timesteps. Should the timestep for any subdomain require to become larger than the 0.99*CLF condition a warning will be printed. This warning never showed up in any of our simulations. If this shows up the conservative timestep is still chosen too large and should be reduced slightly more.
 
 ### Water Visualization
 
@@ -528,7 +527,7 @@ $$
 
 The visualization uses `GLMakie.jl` to render both the terrain and the water surface in 3D. The water shading is inspired by [2]: depth-dependent transparency and color tinting are combined with Beer–Lambert attenuation, a Schlick-type Fresnel reflection approximation, and simple specular highlights to improve the visual distinction between shallow and deep regions. Surface normals estimated from the free-surface geometry are used to modulate reflections and lighting.
 
-## :wrench: Setup
+## Setup
 
 **Julia:** ≥ 1.9 recommended
 
@@ -573,7 +572,7 @@ or, for the well-balanced single-XPU implementation,
 julia --project src/xpu/2d_swe_xpu_wb.jl
 ```
 
-The CPU reference implementation can be run through
+The CPU implementation can be run through
 
 ```bash
 julia --project src/xpu/2d_swe_cpu.jl
@@ -585,14 +584,9 @@ The `run_files/` folder slurm scripts. Check the README in that folder for more 
 
 ### Single-XPU workflow
 
-Typical development runs use the XPU scripts with either the CPU threading backend or a GPU backend selected inside the Julia file:
+Typical development runs use the XPU scripts.
 
-```julia
-const USE_GPU = false
-```
-
-or
-
+To enable GPU support set 
 ```julia
 const USE_GPU = true
 ```
@@ -617,15 +611,15 @@ To run at fullscale use the slurm scripts provided.
 ## :package: Repository Structure
 
 ```bash
-├─ data/                                   # Input topography or wave-related data
-├─ docs/                                   # Result figures, animations, and presentation related
-├─ run_files/                              # Slurm scripts
+├─ data/                                  # Input topography or wave-related data
+├─ docs/                                  # Result figures, animations, and presentation related
+├─ run_files/                             # Slurm scripts
 │ ├─ run_2D_swe_compression.sh
 │ ├─ run_2D_swe_multi_xpu.sh
 │ ├─ run_2D_swe_xpu_wb.sh
 │ └─ run_2D_swe_xpu.sh
-├─ src/                                    # Numerical solvers and utilities
-│ ├─ 1D_reference/                        # 1D SWE reference examples
+├─ src/                                   # Numerical solvers and utilities
+│ ├─ 1D_reference/                        # 1D SWE reference
 │ ├─ 1D_with_z/                           # 1D SWE with bottom topography
 │ ├─ 2d_with_z/                           # Baseline 2D SWE implementation with topography
 │ ├─ viz/                                 # Visualization scripts
@@ -636,29 +630,30 @@ To run at fullscale use the slurm scripts provided.
 │ │ ├─ 2d_swe_xpu_wb.jl
 │ │ ├─ 2d_swe_xpu.jl
 │ │ ├─ output_compression.jl
-│ └─ reference.jl                        # Auxiliary reference implementation
+│ └─ reference.jl                         # Auxiliary reference implementation
 ├─ .gitignore
 ├─ Manifest.toml
 ├─ Project.toml
 └─ README.md
 ```
 
-## Adding topography and extending to 2D
+## Documentation for each script
+
+As stated in the introduction, this project followed the approach of the Porousconvection project from the first part of this course closely. This means that we started of on a 1D version. After validation of the 1D version we extended it to a 2D version. The 2D version was then ported to XPU and multi-XPU for the final scripts. As our first solver did not preserve the steady state we implemented a second XPU version with the well-balanced (wb) scheme.
+
+### Adding topography and extending to 2D
 
 ```bash
 src/1D_reference/
 src/1D_with_z/
 ```
 
-The reference script was the starting point for us. Based on this we implemented our first solver which is the 1D_with_z version that contains a z layer for
+The reference script was the starting point for us. Based on this we implemented our first solver which is the 1D_with_z version that contains a z layer allowing to set a bathometry and topography.
 
-This version was used to check validate our solver agains analytical solutions using the classical dam-break example.
+This version was used to validate our solver agains analytical solutions using the classical dam-break example.
 
 ![dam-break](docs/animations/Validation/dam_break_1d.gif)
 *Dam break comparing analytical version vs our numeric solver.*
-
-![swe_1d](docs/animations/Validation/swe1d.gif)
-*This animation visualizes the wave propagation from the `reference.jl` reference solution.*
 
 Next we extended the 1d version to 2d which is located at
 
@@ -666,99 +661,70 @@ Next we extended the 1d version to 2d which is located at
 src/2d_with_z/
 ```
 
-![swe_2d](docs/animations/Validation/2d_swe_topo.mp4)
-*This animation shows the output of `2d_swe.jl` with absorbing BC.* 
+This coordinate extension required to introduce x and y fluxes and splitting the state into h(water height), hv(momentum x) and hu(momentum y).
 
-## 2D SWE single-XPU solver
+<video src="docs/animations/Validation/2d_swe_topo.mp4" controls="controls" muted="muted" autoplay="autoplay" loop="loop" playsinline="playsinline" style="max-width: 100%;">
+  Your browser does not support the video tag.
+</video>
 
-The main non-well-balanced parallel solver is
+*This animation shows the output of `2d_swe.jl`.* 
+
+### 2D SWE single-XPU solver
+
+The final non-well-balanced parallel solver is
 
 ```bash
 src/xpu/2d_swe_xpu.jl
 ```
 
-The single-XPU solver ports the 2D SWE finite-volume workflow to `ParallelStencil.jl`.  
-The state arrays and update operations are expressed in a form suitable for both CPU threads and GPUs.
+The single-XPU extends the `2d_with_z` solver using `ParallelStencil.jl`. In doing so we introduced Kernels for optimal parallel computation and all arrays were transformed to the ParralelStencil `Data.Arrays` allowing to switch between CPU and GPU.
 
-### Main implementation ideas
+Also domain expansion was added. Essentially the area of interest (AOI) is extended in all directions and the sponge layer is only applied on the N outermost layers. This ensures that the sponge layer does not produce artifacts inside the simulated domain and if the domain multiplication factor is chosen large enough, no waves will be reflected back to the AOI. Only the AOI is visualized.
 
-- same PDE and finite-volume structure as the baseline solver,
-- backend portability through `ParallelStencil.jl`,
-- parallel kernels for fluxes and updates,
-- optional absorbing outer-domain treatment,
-- frame or array output for post-processing,
-- performance-oriented variants for timing studies.
+This version includes a topography loader which can import topography as well as water level data.
 
-### Run a single-XPU simulation
+### 2D well-balanced SWE single-XPU solver
 
-```bash
-julia --project src/xpu/2d_swe_xpu.jl
-```
-
-or use
-
-```bash
-bash run_files/run_2D_swe_xpu.sh
-```
-
-## 2D well-balanced SWE single-XPU solver
-
-The well-balanced single-XPU solver is
+Find the well balanced solver at
 
 ```bash
 src/xpu/2d_swe_xpu_wb.jl
 ```
 
-This is the main physically enhanced single-XPU implementation.  
-It extends the XPU solver with:
+This is a `ParallelStencil.jl` implementation of the above described well-balanced numerical scheme. Everything stated for is section [2D SWE single-XPU solver](#2d-swe-single-xpu-solver) also applies here.
 
-- free-surface reconstruction,
-- face-based interface depths,
-- well-balanced Rusanov mass fluxes,
-- hydrostatically compatible source terms,
-- desingularized velocity evaluation,
-- dry-cell cleanup,
-- draining timesteps,
-- sponge-layer damping,
-- optional serialized frame output if live Makie visualization is unavailable or disabled.
 
-In the script, the computational domain is enlarged relative to the area of interest to accommodate an outer sponge layer. The solver can write either visual frames or serialized arrays depending on the runtime configuration.
+#### Performance analysis
 
-### Run the well-balanced single-XPU simulation
+In order to asses how well our solver is capable of utilizing the available memory bandwidth, we applied the performance analysis technique presented in [lecture 7 of the first part of this course](https://pde-on-gpu.vaw.ethz.ch/lecture7/). We do only reach 12.5% of the available 4000 GB/s memory bandwidth. Check the performance plot below. 
 
-```bash
-julia --project src/xpu/2d_swe_xpu_wb.jl
-```
+When comparing to the lecture we can see that the kernels used there were much smaller than the ones we require and those kernels reached about 50% of the maximum throughput. Based on this we do believe that reaching 20-30% of maximum througput is possible but would require massive restructuring of the kernels. 
 
-or
+Right now we start many smaller kernels. We believe that this causes some overhead. This could be addressed by merging some of our Kernels together however if the Kernels become too large other issues start to show up. We attempted to do this but in the end this only made performance worse and as we can simulate 20000x20000 gridpoints for thousands of time-steps withing minutes (seconds on multi-GPU) we rather focused our resources on visualization, importing, terrain generation and MULTI-GPU. Note that at 20000x20000 gridpoints the memory limit is almost reached on single GPU.
 
-```bash
-bash run_files/run_2D_swe_xpu_wb.sh
-```
+![Performance analysis](docs/final_presentation_docs/performance_plot.png)
 
-## 2D well-balanced SWE multi-XPU solver
 
-The principal distributed implementation is
+### 2D well-balanced SWE multi-XPU solver
+
+The distributed implementation is
 
 ```bash
 src/xpu/2d_swe_multi_xpu_wb.jl
 ```
 
-This script combines the two central strands of the project:
-
-1. the **well-balanced wet/dry SWE discretisation**, and  
-2. the **multi-XPU distributed execution** through `ImplicitGlobalGrid.jl`.
+For general information check [general multi-xpu impl](#implicitglobalgridjl-multi-xpu-implementation)
 
 It uses the same physical model and well-balanced reconstruction as the single-XPU solver, but adds:
 
 - distributed grid initialization,
-- process topology and neighbour identification,
-- halo exchange of $h$, $hu$, and $hv$,
+- halo exchange,
 - MPI-based global extrema/reductions,
-- distributed serialization or visualization output,
-- cleanup through `finalize_global_grid()`.
+- distributed serialization or visualization output
 
-### Code-level multi-XPU workflow
+The boundary exchange and the bathymetry + topography loader required larger modifications to deal with the MPI domains.
+
+#### Code-level multi-XPU
 
 The solver follows the pattern
 
@@ -779,19 +745,7 @@ and at the end,
 finalize_global_grid()
 ```
 
-### Run the well-balanced multi-XPU solver
-
-```bash
-julia --project src/xpu/2d_swe_multi_xpu_wb.jl
-```
-
-For actual distributed execution, use the cluster-appropriate MPI launch or the repository shell script:
-
-```bash
-bash run_files/run_2D_swe_multi_xpu.sh
-```
-
-## :white_check_mark: Diagnostics, Reference Solutions, and Testing
+## Diagnostics, Reference Solutions, and Testing
 
 The verification strategy is built around the shared solver routines in `src/solvers.jl`. For the sequential 1D and 2D implementations, the solver functions defined there are called at every timestep of a simulation and perform the full state update. These routines therefore provide the central reference point for our diagnostics and testing.
 
@@ -828,19 +782,19 @@ For the non-well-balanced 2D XPU implementation, verification is performed on th
 
 After establishing these checks for the non-well-balanced schemes, we introduced the well-balanced formulation. Its main verification case is the lake-at-rest configuration, where a stationary free surface over nontrivial topography should remain at rest. This test directly checks the defining property of the well-balanced scheme: the numerical balance between flux gradients and source terms.
 
-![Fully_wet](docs/presi_docs/steady_state_fully_wet.png)
+![Fully_wet](docs/final_presentation_docs/steady_state_fully_wet.png)
 *Initial condition and topography for the fully wet lake-at-rest benchmark.*
 
-![Fully_wet_error](docs/presi_docs/error_convergence_full_wet.png)
+![Fully_wet_error](docs/final_presentation_docs/error_convergence_full_wet.png)
 *Error evolution for the fully wet lake-at-rest test. The well-balanced scheme preserves the steady state up to machine precision.*
 
 ![Fully_wet_error_nonwb](docs/swe2d_topography_error_benchmark_non_wb.png)
 *Error evolution for the fully wet lake-at-rest test. The non-well-balanced scheme cannot preserve the steady state, no clear convergence eighter.*
 
-![wet_dry](docs/presi_docs/steady_state_sea_lvl.png)
+![wet_dry](docs/final_presentation_docs/steady_state_sea_lvl.png)
 *Initial condition and topography for the partially wet lake-at-rest benchmark, including wet and dry regions.*
 
-![Dry_wet_error](docs/presi_docs/error_convergence_topography.png)
+![Dry_wet_error](docs/final_presentation_docs/error_convergence_topography.png)
 *Error evolution for the partially wet benchmark. The steady state is not preserved exactly, but the well-balanced scheme shows convergent error behavior.*
 
 
