@@ -29,33 +29,240 @@ using Printf
 const h_eps = 1e-2
 const nt_nx_multiplier = 4
 
+"""
+    avx_comp(hv1, hv2, h, ix, iy)
+
+Compute the x-face average of hv1*hv2/h between cells (ix,iy) and (ix+1,iy).
+
+# Arguments
+- hv1, hv2: Momentum-like arrays.
+- h: Water-depth array.
+- ix, iy: Cell indices.
+
+# Returns
+- Scalar face-averaged value in x.
+"""
 @inline avx_comp(hv1, hv2, h, ix, iy) = 0.5 * (hv1[ix, iy] * hv2[ix, iy] / h[ix, iy] + hv1[ix+1, iy] * hv2[ix+1, iy] / h[ix+1, iy])
+
+"""
+    avy_comp(hv1, hv2, h, ix, iy)
+
+Compute the y-face average of hv1*hv2/h between cells (ix,iy) and (ix,iy+1).
+
+# Arguments
+- hv1, hv2: Momentum-like arrays.
+- h: Water-depth array.
+- ix, iy: Cell indices.
+
+# Returns
+- Scalar face-averaged value in y.
+"""
 @inline avy_comp(hv1, hv2, h, ix, iy) = 0.5 * (hv1[ix, iy] * hv2[ix, iy] / h[ix, iy] + hv1[ix, iy+1] * hv2[ix, iy+1] / h[ix, iy+1])
+
+"""
+    avx_simp(h, ix, iy)
+
+Compute the simple x-face average of h^2 between cells (ix,iy) and (ix+1,iy).
+
+# Arguments
+- h: Water-depth array.
+- ix, iy: Cell indices.
+
+# Returns
+- Scalar average of squared depth in x.
+"""
 @inline avx_simp(h, ix, iy) = 0.5 * (h[ix, iy] * h[ix, iy] + h[ix+1, iy] * h[ix+1, iy])
+
+"""
+    avy_simp(h, ix, iy)
+
+Compute the simple y-face average of h^2 between cells (ix,iy) and (ix,iy+1).
+
+# Arguments
+- h: Water-depth array.
+- ix, iy: Cell indices.
+
+# Returns
+- Scalar average of squared depth in y.
+"""
 @inline avy_simp(h, ix, iy) = 0.5 * (h[ix, iy] * h[ix, iy] + h[ix, iy+1] * h[ix, iy+1])
+
+"""
+    dxa(h, ix, iy)
+
+Forward difference in x at cell (ix,iy).
+
+# Arguments
+- h: Input array.
+- ix, iy: Cell indices.
+
+# Returns
+- h[ix+1,iy] - h[ix,iy].
+"""
 @inline dxa(h, ix, iy) = h[ix+1, iy] - h[ix, iy]
+
+"""
+    dya(h, ix, iy)
+
+Forward difference in y at cell (ix,iy).
+
+# Arguments
+- h: Input array.
+- ix, iy: Cell indices.
+
+# Returns
+- h[ix,iy+1] - h[ix,iy].
+"""
 @inline dya(h, ix, iy) = h[ix, iy+1] - h[ix, iy]
 
+"""
+    dxb(h, ix, iy)
+
+Backward difference in x at cell (ix,iy).
+
+# Arguments
+- h: Input array.
+- ix, iy: Cell indices.
+
+# Returns
+- h[ix,iy] - h[ix-1,iy].
+"""
 @inline dxb(h, ix, iy) = h[ix, iy] - h[ix-1, iy]
+
+"""
+    dyb(h, ix, iy)
+
+Backward difference in y at cell (ix,iy).
+
+# Arguments
+- h: Input array.
+- ix, iy: Cell indices.
+
+# Returns
+- h[ix,iy] - h[ix,iy-1].
+"""
 @inline dyb(h, ix, iy) = h[ix, iy] - h[ix, iy-1]
 
+"""
+    eta(h, z, ix, iy)
+
+Compute the free-surface elevation eta = h + z at (ix,iy).
+
+# Arguments
+- h: Water-depth array.
+- z: Bathymetry array.
+- ix, iy: Cell indices.
+
+# Returns
+- Scalar free-surface elevation.
+"""
 @inline eta(h, z, ix, iy) = h[ix, iy] + z[ix, iy]
 
+"""
+    zx_face(z, ix, iy)
+
+Compute the x-face average of bathymetry between (ix,iy) and (ix+1,iy).
+
+# Arguments
+- z: Bathymetry array.
+- ix, iy: Cell indices.
+
+# Returns
+- Scalar face-averaged bathymetry in x.
+"""
 @inline zx_face(z, ix, iy) = 0.5 * (z[ix, iy] + z[ix+1, iy])
+
+"""
+    zy_face(z, ix, iy)
+
+Compute the y-face average of bathymetry between (ix,iy) and (ix,iy+1).
+
+# Arguments
+- z: Bathymetry array.
+- ix, iy: Cell indices.
+
+# Returns
+- Scalar face-averaged bathymetry in y.
+"""
 @inline zy_face(z, ix, iy) = 0.5 * (z[ix, iy] + z[ix, iy+1])
 
+"""
+    hx_L(h, z, ix, iy)
+
+Reconstructed left depth at the x-face between (ix,iy) and (ix+1,iy).
+
+# Arguments
+- h: Water-depth array.
+- z: Bathymetry array.
+- ix, iy: Cell indices.
+
+# Returns
+- Non-negative reconstructed depth on the left side.
+"""
 @inline hx_L(h, z, ix, iy) =
     max(0.0, eta(h, z, ix, iy) - zx_face(z, ix, iy))
 
+"""
+    hx_R(h, z, ix, iy)
+
+Reconstructed right depth at the x-face between (ix,iy) and (ix+1,iy).
+
+# Arguments
+- h: Water-depth array.
+- z: Bathymetry array.
+- ix, iy: Cell indices.
+
+# Returns
+- Non-negative reconstructed depth on the right side.
+"""
 @inline hx_R(h, z, ix, iy) =
     max(0.0, eta(h, z, ix+1, iy) - zx_face(z, ix, iy))
 
+"""
+    hy_L(h, z, ix, iy)
+
+Reconstructed left depth at the y-face between (ix,iy) and (ix,iy+1).
+
+# Arguments
+- h: Water-depth array.
+- z: Bathymetry array.
+- ix, iy: Cell indices.
+
+# Returns
+- Non-negative reconstructed depth on the left side.
+"""
 @inline hy_L(h, z, ix, iy) =
     max(0.0, eta(h, z, ix, iy) - zy_face(z, ix, iy))
 
+"""
+    hy_R(h, z, ix, iy)
+
+Reconstructed right depth at the y-face between (ix,iy) and (ix,iy+1).
+
+# Arguments
+- h: Water-depth array.
+- z: Bathymetry array.
+- ix, iy: Cell indices.
+
+# Returns
+- Non-negative reconstructed depth on the right side.
+"""
 @inline hy_R(h, z, ix, iy) =
     max(0.0, eta(h, z, ix, iy+1) - zy_face(z, ix, iy))
 
+"""
+    desing_velocity(hval, qval, vel_eps)
+
+Compute a depth-limited velocity from depth and momentum.
+
+# Arguments
+- hval: Local depth value.
+- qval: Local momentum value.
+- vel_eps: Regularization parameter to avoid division by zero.
+
+# Returns
+- Scalar velocity, zero in dry cells.
+"""
 @inline function desing_velocity(hval, qval, vel_eps)
     if hval <= 0.0
         return 0.0
@@ -65,17 +272,73 @@ const nt_nx_multiplier = 4
            sqrt(hval^4 + max(hval^4, vel_eps))
 end
 
+"""
+    vel_u(h, hu, ix, iy, vel_eps)
+
+Compute the x-velocity from depth and x-momentum at (ix,iy).
+
+# Arguments
+- h: Water-depth array.
+- hu: x-momentum array.
+- ix, iy: Cell indices.
+- vel_eps: Regularization parameter.
+
+# Returns
+- Scalar x-velocity.
+"""
 @inline vel_u(h, hu, ix, iy, vel_eps) =
     desing_velocity(h[ix, iy], hu[ix, iy], vel_eps)
 
+"""
+    vel_v(h, hv, ix, iy, vel_eps)
+
+Compute the y-velocity from depth and y-momentum at (ix,iy).
+
+# Arguments
+- h: Water-depth array.
+- hv: y-momentum array.
+- ix, iy: Cell indices.
+- vel_eps: Regularization parameter.
+
+# Returns
+- Scalar y-velocity.
+"""
 @inline vel_v(h, hv, ix, iy, vel_eps) =
     desing_velocity(h[ix, iy], hv[ix, iy], vel_eps)
 
+"""
+    bc_speed_x(h, hu, ix, iy, g)
+
+Compute characteristic boundary speed in x for the sponge/BC update.
+
+# Arguments
+- h: Water-depth array.
+- hu: x-momentum array.
+- ix, iy: Cell indices.
+- g: Gravity constant.
+
+# Returns
+- Scalar wave speed estimate in x.
+"""
 @inline bc_speed_x(h, hu, ix, iy, g) =
     h[ix, iy] > h_eps ?
         abs(hu[ix, iy] / h[ix, iy]) + sqrt(g * h[ix, iy]) :
         0.0
 
+"""
+    bc_speed_y(h, hv, ix, iy, g)
+
+Compute characteristic boundary speed in y for the sponge/BC update.
+
+# Arguments
+- h: Water-depth array.
+- hv: y-momentum array.
+- ix, iy: Cell indices.
+- g: Gravity constant.
+
+# Returns
+- Scalar wave speed estimate in y.
+"""
 @inline bc_speed_y(h, hv, ix, iy, g) =
     h[ix, iy] > h_eps ?
         abs(hv[ix, iy] / h[ix, iy]) + sqrt(g * h[ix, iy]) :
@@ -84,6 +347,21 @@ end
 const g = 1.0
 
 
+"""
+    compute_maxspeed!(max_speed_x, max_speed_y, h, hu, hv, z, g, vel_eps)
+
+Compute local maximum wave speeds on all x- and y-faces.
+
+# Arguments
+- max_speed_x, max_speed_y: Output arrays for x- and y-face speeds.
+- h, hu, hv: Water depth and momentum fields.
+- z: Bathymetry field.
+- g: Gravity constant.
+- vel_eps: Velocity regularization parameter.
+
+# Returns
+- Nothing. Writes to max_speed_x and max_speed_y.
+"""
 @parallel_indices (ix, iy) function compute_maxspeed!(
     max_speed_x, max_speed_y,
     h, hu, hv, z, g, vel_eps
@@ -123,6 +401,21 @@ end
 # Kernels
 # -----------------------------------------------------------------------------
 
+"""
+    compute_draining_timestep!(dt_drain, F₁, G₁, h, dt, _dx, _dy)
+
+Compute the draining timestep constraint per cell based on outgoing fluxes.
+
+# Arguments
+- dt_drain: Output array of local drain timesteps.
+- F₁, G₁: Mass fluxes in x and y.
+- h: Water-depth array.
+- dt: Current global timestep.
+- _dx, _dy: Inverse grid spacing.
+
+# Returns
+- Nothing. Writes to dt_drain.
+"""
 @parallel_indices (ix, iy) function compute_draining_timestep!(
     dt_drain,
     F₁, G₁,
@@ -153,6 +446,20 @@ end
     return nothing
 end
 
+"""
+    compute_effective_flux_timesteps!(dtFx, dtGy, dt_drain, F₁, G₁, dt)
+
+Compute face-wise effective timesteps using upwinded draining limits.
+
+# Arguments
+- dtFx, dtGy: Output arrays for x- and y-face timesteps.
+- dt_drain: Cell-centered draining timesteps.
+- F₁, G₁: Mass fluxes in x and y.
+- dt: Global timestep.
+
+# Returns
+- Nothing. Writes to dtFx and dtGy.
+"""
 @parallel_indices (ix, iy) function compute_effective_flux_timesteps!(
     dtFx, dtGy,
     dt_drain,
@@ -187,6 +494,24 @@ end
     return nothing
 end
 
+"""
+    compute_1st_2nd_and_3th_flux!(F₁, F₂, F₃, G₁, G₂, G₃, hu, hv, h, z, g,
+                                 max_speed_x, max_speed_y, vel_eps)
+
+Compute Rusanov fluxes for mass and momentum in both x and y directions.
+
+# Arguments
+- F₁, F₂, F₃: Fluxes on x-faces (mass, x-momentum, y-momentum).
+- G₁, G₂, G₃: Fluxes on y-faces (mass, x-momentum, y-momentum).
+- hu, hv, h: Momentum and depth fields.
+- z: Bathymetry field.
+- g: Gravity constant.
+- max_speed_x, max_speed_y: Precomputed max wave speeds.
+- vel_eps: Velocity regularization parameter.
+
+# Returns
+- Nothing. Writes to F* and G* arrays.
+"""
 @parallel_indices (ix, iy) function compute_1st_2nd_and_3th_flux!(
     F₁, F₂, F₃,
     G₁, G₂, G₃,
@@ -291,18 +616,24 @@ end
     return nothing
 end
 
+"""
+    update_height_momentum!(h, hu, hv, F₁, G₁, F₂, F₃, G₂, G₃, dtFx, dtGy,
+                            z, g, dt, _dx, _dy)
 
+Update water depth and momentum using flux divergence and source terms.
 
-# @parallel_indices (ix, iy) function update_height_momentum!(h, hu, hv, F₁, G₁, F₂, F₃, G₂, G₃, dzdx, dzdy, g, dt, _dx, _dy)
-#     nx, ny = size(h)
-#     if (2 <= ix <= nx-1 && 2 <= iy <= ny-1)
-#         hu[ix, iy] -= dt * (dxb(F₂, ix, iy) * _dx + dyb(G₂, ix, iy) * _dy + g * h[ix, iy] * dzdx[ix, iy])
-#         hv[ix, iy] -= dt * (dxb(F₃, ix, iy) * _dx + dyb(G₃, ix, iy) * _dy + g * h[ix, iy] * dzdy[ix, iy])
-#         h[ix, iy] -= dt * (dxb(F₁, ix, iy) * _dx + dyb(G₁, ix, iy) * _dy)
-#     end
-#     return nothing
-# end
+# Arguments
+- h, hu, hv: State arrays updated in place.
+- F₁, G₁, F₂, F₃, G₂, G₃: Flux arrays.
+- dtFx, dtGy: Face-wise timesteps for mass fluxes.
+- z: Bathymetry field.
+- g: Gravity constant.
+- dt: Global timestep.
+- _dx, _dy: Inverse grid spacing.
 
+# Returns
+- Nothing. Updates h, hu, hv in place.
+"""
 @parallel_indices (ix, iy) function update_height_momentum!(
     h, hu, hv,
     F₁, G₁, F₂, F₃, G₂, G₃, dtFx, dtGy,
@@ -369,6 +700,20 @@ end
     return nothing
 end
 
+"""
+    left_right_bc!(h, hu, hv, g, dt, _dx)
+
+Apply radiative boundary conditions on the left and right edges.
+
+# Arguments
+- h, hu, hv: State arrays updated in place.
+- g: Gravity constant.
+- dt: Timestep.
+- _dx: Inverse grid spacing in x.
+
+# Returns
+- Nothing. Updates boundary columns in place.
+"""
 @parallel_indices (iy) function left_right_bc!(h, hu, hv, g, dt, _dx)
     nx, ny = size(h)
 
@@ -407,6 +752,20 @@ end
     return nothing
 end
 
+"""
+    bottom_top_bc!(h, hu, hv, g, dt, _dy)
+
+Apply radiative boundary conditions on the bottom and top edges.
+
+# Arguments
+- h, hu, hv: State arrays updated in place.
+- g: Gravity constant.
+- dt: Timestep.
+- _dy: Inverse grid spacing in y.
+
+# Returns
+- Nothing. Updates boundary rows in place.
+"""
 @parallel_indices (ix) function bottom_top_bc!(h, hu, hv, g, dt, _dy)
     nx, ny = size(h)
 
@@ -445,26 +804,36 @@ end
     return nothing
 end
 
+"""
+    sponge_layer!(hu, hv, σ)
+
+Apply a multiplicative damping layer to momentum fields.
+
+# Arguments
+- hu, hv: Momentum arrays updated in place.
+- σ: Damping coefficient field in [0,1].
+
+# Returns
+- Nothing. Updates hu and hv in place.
+"""
 @parallel function sponge_layer!(hu, hv, σ)
     @all(hu) = @all(hu) * (1 - @all(σ))
     @all(hv) = @all(hv) * (1 - @all(σ))
     return nothing
 end
 
-# @parallel_indices (ix, iy) function dry_cell_fix!(h, hu, hv, h_eps)
-#     nx, ny = size(h)
+"""
+    dry_cell_fix!(h, hu, hv, h_eps)
 
-#     if ix <= nx && iy <= ny
-#         if h[ix, iy] < h_eps
-#             h[ix, iy]  = 0.0
-#             hu[ix, iy] = 0.0
-#             hv[ix, iy] = 0.0
-#         end
-#     end
+Clamp dry or invalid cells to zero depth and momentum.
 
-#     return nothing
-# end
+# Arguments
+- h, hu, hv: State arrays updated in place.
+- h_eps: Dry-cell threshold.
 
+# Returns
+- Nothing. Updates h, hu, hv in place.
+"""
 @parallel_indices (ix, iy) function dry_cell_fix!(h, hu, hv, h_eps)
     nx, ny = size(h)
 
@@ -482,6 +851,21 @@ end
     return nothing
 end
 
+"""
+    check_bc_preserves_eta(h, z, η0, ix_roi, iy_roi; tol=1e-8)
+
+Check whether boundary conditions preserve a target free-surface level.
+
+# Arguments
+- h: Water-depth array.
+- z: Bathymetry array.
+- η0: Reference free-surface array.
+- ix_roi, iy_roi: Indices defining the region of interest.
+- tol: Tolerance for max deviation.
+
+# Returns
+- Boolean indicating if the max deviation is within tol.
+"""
 function check_bc_preserves_eta(h, z, η0, ix_roi, iy_roi; tol=1e-8)
     """ Check if BC (eta = h + z) = eta0 """
     eta_roi = h[ix_roi, iy_roi] .+ z[ix_roi, iy_roi]
@@ -498,6 +882,17 @@ function check_bc_preserves_eta(h, z, η0, ix_roi, iy_roi; tol=1e-8)
 end
 
 
+"""
+    Island
+
+Container for a cosine-ramp island specification.
+
+# Fields
+- x0, y0: Island center coordinates.
+- zmax: Maximum elevation at the flat top.
+- rflat: Radius of the flat top.
+- redge: Radius where the island tapers to zero.
+"""
 struct Island
     x0::Float64
     y0::Float64
@@ -506,6 +901,22 @@ struct Island
     redge::Float64
 end
 
+"""
+    background_bumps(xs, ys; nhills=40, amp_range=(0.01, 0.03),
+                     sigma_range=(1.5, 4.0), seed=nothing)
+
+Generate a random Gaussian hill field over the domain grid.
+
+# Arguments
+- xs, ys: Coordinate vectors.
+- nhills: Number of Gaussian hills.
+- amp_range: Min/max hill amplitudes.
+- sigma_range: Min/max hill widths.
+- seed: Optional random seed.
+
+# Returns
+- 2D array of background bathymetry bumps.
+"""
 function background_bumps(xs, ys; nhills=40, amp_range=(0.01, 0.03),
                           sigma_range=(1.5, 4.0), seed=nothing)
 
@@ -539,6 +950,19 @@ function background_bumps(xs, ys; nhills=40, amp_range=(0.01, 0.03),
     return Z
 end
 
+"""
+    add_island!(z, xs, ys, isl)
+
+Add an island profile to bathymetry array z in place.
+
+# Arguments
+- z: Bathymetry array updated in place.
+- xs, ys: Coordinate vectors.
+- isl: Island specification.
+
+# Returns
+- z with the island elevation added.
+"""
 function add_island!(z, xs, ys, isl::Island)
     for i in eachindex(xs), j in eachindex(ys)
         x = xs[i]
@@ -555,6 +979,19 @@ function add_island!(z, xs, ys, isl::Island)
     return z
 end
 
+"""
+    build_topography(xs, ys; islands=Island[], background=nothing)
+
+Construct bathymetry from optional islands and background function.
+
+# Arguments
+- xs, ys: Coordinate vectors.
+- islands: Array of Island specs.
+- background: Optional function (xs, ys) -> array.
+
+# Returns
+- Bathymetry array z.
+"""
 function build_topography(xs, ys; islands=Island[], background=nothing)
     z = @zeros(length(xs), length(ys))
 
@@ -569,6 +1006,22 @@ function build_topography(xs, ys; islands=Island[], background=nothing)
     return z
 end
 
+"""
+    load_topography_data(domain_expansion_factor, nx_aoi_ext, ny_aoi_ext, xs, ys)
+
+Load bathymetry and initial free surface from tsunami data files and
+interpolate to the extended grid.
+
+# Arguments
+- domain_expansion_factor: Domain size multiplier for sponge/BC padding.
+- nx_aoi_ext, ny_aoi_ext: Extended area-of-interest resolution.
+- xs, ys: Coordinate vectors for the full domain.
+
+# Returns
+- z: Bathymetry array (ParallelStencil backend).
+- η0: Initial free-surface array (ParallelStencil backend).
+- lx_aoi, ly_aoi: Physical lengths of the area of interest.
+"""
 function load_topography_data(domain_expansion_factor, nx_aoi_ext, ny_aoi_ext, xs, ys)
     # base_file = "data/tsunamiOku/D112-94-50m.txt"
     # wave_file = "data/tsunamiOku/I112-94-50m-17a.txt"
@@ -688,6 +1141,26 @@ end
 # -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
+"""
+    swe2d_topography_frames(; nt=0, nx_aoi=250, ny_aoi=250, domain_expansion_factor=3,
+                            outdir="frames", do_viz=true, force_array_output=false,
+                            perf_test=false, debug_roi=false)
+
+Run the 2D well-balanced SWE solver over topography and optionally output frames.
+
+# Arguments
+- nt: Number of timesteps (0 uses an nx-based default).
+- nx_aoi, ny_aoi: Resolution of the area of interest.
+- domain_expansion_factor: Domain multiplier for sponge/BC padding.
+- outdir: Output directory for frames or arrays.
+- do_viz: Enable visualization or array output.
+- force_array_output: Force array output even if Makie is available.
+- perf_test: Use a synthetic initial condition for performance testing.
+- debug_roi: Visualize the full domain instead of the ROI.
+
+# Returns
+- Linf_abs: Absolute L-infinity error on wet cells (NaN if not evaluated).
+"""
 @views function swe2d_topography_frames(; nt=0, nx_aoi=250, ny_aoi=250, domain_expansion_factor=3, outdir = "frames", do_viz = true, force_array_output=false, perf_test=false, debug_roi=false)
     # physics and numerics
     lx_aoi = 154 * 50 # aoi = area of interest
