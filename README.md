@@ -29,9 +29,12 @@ The numerical focus is a first-order finite-volume SWE solver with Rusanov fluxe
 - [Adding topography and extending to 2D](#adding-topography-and-extending-to-2d)
 - [2D SWE single-XPU solver](#2d-swe-single-xpu-solver)
 - [2D well-balanced SWE single-XPU solver](#2d-well-balanced-swe-single-xpu-solver)
+- [Performance analysis](#performance-analysis)
 - [2D well-balanced SWE multi-XPU solver](#2d-well-balanced-swe-multi-xpu-solver)
+- [Scaling analysis](#scaling-analysis)
 - [Diagnostics, reference solutions, and testing](#diagnostics-reference-solutions-and-testing)
 - [Visualization and output processing](#visualization-and-output-processing)
+- [Galery](#galery)
 - [Discussion and outlook](#discussion-and-outlook)
 - [References](#references)
 
