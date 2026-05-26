@@ -872,7 +872,7 @@ julia --project src/xpu/output_compression.jl
 
 ## Galery
 ![gauss vs TOPO1](docs/animations/QualityVisualizations/NewTopo1_Gauss.gif)
-*Gauss wave vs [Topo1](data/tsunamiOku/D112-94-50m.txt)*
+*Gaussian wave vs [Topo1](data/tsunamiOku/D112-94-50m.txt)*
 
 ![Topo1](docs/animations/QualityVisualizations/Topo1.gif)
 *Tsunami wave vs [Topo1](data/tsunamiOku/D112-94-50m.txt)*
