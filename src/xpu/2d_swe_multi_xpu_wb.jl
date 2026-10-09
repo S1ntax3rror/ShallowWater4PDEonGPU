@@ -1,8 +1,12 @@
 using Serialization
 
 const HAS_MAKIE = try
-    @eval using GLMakie
-    true
+    if get(ENV, "SWE_HEADLESS", "false") == "true"
+        false
+    else
+        @eval using GLMakie
+        true
+    end
 catch
     @info "GLMakie not found. Falling back to array output."
     false
@@ -29,7 +33,9 @@ end
 using Printf
 
 nt_nx_multiplier = 2 # no const on purpose
-const h_eps = 1e-2
+const h_eps = 1e-10
+
+include("wet_dry_reconstruction.jl")
 
 """
     avx_comp(hv1, hv2, h, ix, iy)
@@ -163,30 +169,30 @@ Compute the free-surface elevation eta = h + z at (ix,iy).
 """
     zx_face(z, ix, iy)
 
-Compute the x-face average of bathymetry between (ix,iy) and (ix+1,iy).
+Compute the common x-face bed barrier between (ix,iy) and (ix+1,iy).
 
 # Arguments
 - z: Bathymetry array.
 - ix, iy: Cell indices.
 
 # Returns
-- Scalar face-averaged bathymetry in x.
+- Maximum of the two adjacent bed elevations in x.
 """
-@inline zx_face(z, ix, iy) = 0.5 * (z[ix, iy] + z[ix+1, iy])
+@inline zx_face(z, ix, iy) = face_bed(z[ix, iy], z[ix+1, iy])
 
 """
     zy_face(z, ix, iy)
 
-Compute the y-face average of bathymetry between (ix,iy) and (ix,iy+1).
+Compute the common y-face bed barrier between (ix,iy) and (ix,iy+1).
 
 # Arguments
 - z: Bathymetry array.
 - ix, iy: Cell indices.
 
 # Returns
-- Scalar face-averaged bathymetry in y.
+- Maximum of the two adjacent bed elevations in y.
 """
-@inline zy_face(z, ix, iy) = 0.5 * (z[ix, iy] + z[ix, iy+1])
+@inline zy_face(z, ix, iy) = face_bed(z[ix, iy], z[ix, iy+1])
 
 """
     hx_L(h, z, ix, iy)
@@ -464,10 +470,12 @@ Compute the draining timestep constraint per cell based on outgoing fluxes.
         drain_rate = out_x * _dx + out_y * _dy
 
         if drain_rate > 0.0
-            dt_drain[ix, iy] = min(dt, h[ix, iy] / drain_rate)
+            dt_drain[ix, iy] = min(dt, max(0.0, h[ix, iy]) / drain_rate)
         else
             dt_drain[ix, iy] = dt
         end
+    elseif ix <= nx && iy <= ny
+        dt_drain[ix, iy] = dt
     end
 
     return nothing
@@ -522,14 +530,15 @@ Compute face-wise effective timesteps using upwinded draining limits.
 end
 
 """
-    compute_1st_2nd_and_3th_flux!(F₁, F₂, F₃, G₁, G₂, G₃, hu, hv, h, z, g,
+    compute_1st_2nd_and_3th_flux!(F₁, F₂, F₃, G₁, G₂, G₃, Pₓ, Pᵧ, hu, hv, h, z, g,
                                  max_speed_x, max_speed_y, vel_eps)
 
-Compute Rusanov fluxes for mass and momentum in both x and y directions.
+Compute hydrostatically reconstructed Rusanov transport and pressure fluxes.
 
 # Arguments
-- F₁, F₂, F₃: Fluxes on x-faces (mass, x-momentum, y-momentum).
-- G₁, G₂, G₃: Fluxes on y-faces (mass, x-momentum, y-momentum).
+- F₁, F₂, F₃: Transport fluxes on x-faces (mass, x-momentum, y-momentum).
+- Pₓ, Pᵧ: Hydrostatic pressure fluxes, kept separate from draining-limited transport.
+- G₁, G₂, G₃: Transport fluxes on y-faces (mass, x-momentum, y-momentum).
 - hu, hv, h: Momentum and depth fields.
 - z: Bathymetry field.
 - g: Gravity constant.
@@ -541,7 +550,7 @@ Compute Rusanov fluxes for mass and momentum in both x and y directions.
 """
 @parallel_indices (ix, iy) function compute_1st_2nd_and_3th_flux!(
     F₁, F₂, F₃,
-    G₁, G₂, G₃,
+    G₁, G₂, G₃, Pₓ, Pᵧ,
     hu, hv, h, z, g,
     max_speed_x, max_speed_y,
     vel_eps
@@ -554,9 +563,6 @@ Compute Rusanov fluxes for mass and momentum in both x and y directions.
     if ix <= nx - 1 && iy <= ny
         hL = hx_L(h, z, ix, iy)
         hR = hx_R(h, z, ix, iy)
-
-        ηL = eta(h, z, ix, iy)
-        ηR = eta(h, z, ix+1, iy)
 
         uL = vel_u(h, hu, ix, iy, vel_eps)
         uR = vel_u(h, hu, ix+1, iy, vel_eps)
@@ -576,13 +582,14 @@ Compute Rusanov fluxes for mass and momentum in both x and y directions.
         # Mass / free-surface flux
         F₁[ix, iy] =
             0.5 * (huL + huR) -
-            0.5 * ax * (ηR - ηL)
+            0.5 * ax * (hR - hL)
 
-        # x-momentum flux
+        # Drain only transport; hydrostatic pressure keeps the global timestep.
+        Pₓ[ix, iy] = 0.25 * g * (hL^2 + hR^2)
         F₂[ix, iy] =
             0.5 * (
-                huL * uL + 0.5 * g * hL^2 +
-                huR * uR + 0.5 * g * hR^2
+                huL * uL +
+                huR * uR
             ) -
             0.5 * ax * (huR - huL)
 
@@ -602,9 +609,6 @@ Compute Rusanov fluxes for mass and momentum in both x and y directions.
         hL = hy_L(h, z, ix, iy)
         hR = hy_R(h, z, ix, iy)
 
-        ηL = eta(h, z, ix, iy)
-        ηR = eta(h, z, ix, iy+1)
-
         uL = vel_u(h, hu, ix, iy, vel_eps)
         uR = vel_u(h, hu, ix, iy+1, vel_eps)
 
@@ -621,7 +625,7 @@ Compute Rusanov fluxes for mass and momentum in both x and y directions.
         # Mass / free-surface flux
         G₁[ix, iy] =
             0.5 * (hvL + hvR) -
-            0.5 * ay * (ηR - ηL)
+            0.5 * ay * (hR - hL)
 
         # x-momentum transported in y
         G₂[ix, iy] =
@@ -631,11 +635,11 @@ Compute Rusanov fluxes for mass and momentum in both x and y directions.
             ) -
             0.5 * ay * (huR - huL)
 
-        # y-momentum flux
+        Pᵧ[ix, iy] = 0.25 * g * (hL^2 + hR^2)
         G₃[ix, iy] =
             0.5 * (
-                hvL * vL + 0.5 * g * hL^2 +
-                hvR * vR + 0.5 * g * hR^2
+                hvL * vL +
+                hvR * vR
             ) -
             0.5 * ay * (hvR - hvL)
     end
@@ -646,7 +650,7 @@ end
 
 
 """
-    update_height_momentum!(h, hu, hv, F₁, G₁, F₂, F₃, G₂, G₃, dtFx, dtGy,
+    update_height_momentum!(h, hu, hv, F₁, G₁, F₂, F₃, G₂, G₃, dtFx, dtGy, Pₓ, Pᵧ,
                             z, g, dt, _dx, _dy)
 
 Update water depth and momentum using flux divergence and source terms.
@@ -654,7 +658,8 @@ Update water depth and momentum using flux divergence and source terms.
 # Arguments
 - h, hu, hv: State arrays updated in place.
 - F₁, G₁, F₂, F₃, G₂, G₃: Flux arrays.
-- dtFx, dtGy: Face-wise timesteps for mass fluxes.
+- dtFx, dtGy: Donor-limited timesteps for mass and momentum transport.
+- Pₓ, Pᵧ: Hydrostatic pressure fluxes using the global timestep.
 - z: Bathymetry field.
 - g: Gravity constant.
 - dt: Global timestep.
@@ -665,7 +670,7 @@ Update water depth and momentum using flux divergence and source terms.
 """
 @parallel_indices (ix, iy) function update_height_momentum!(
     h, hu, hv,
-    F₁, G₁, F₂, F₃, G₂, G₃, dtFx, dtGy,
+    F₁, G₁, F₂, F₃, G₂, G₃, dtFx, dtGy, Pₓ, Pᵧ,
     z, g, dt, _dx, _dy
 )
     nx, ny = size(h)
@@ -673,43 +678,26 @@ Update water depth and momentum using flux divergence and source terms.
     if 2 <= ix <= nx-1 && 2 <= iy <= ny-1
         ηC = eta(h, z, ix, iy)
 
-        # ---------------------------------------------------------------------
-        # x-source term
-        # ---------------------------------------------------------------------
-        zE = 0.5 * (z[ix, iy] + z[ix+1, iy])
-        zW = 0.5 * (z[ix-1, iy] + z[ix, iy])
+        hE = max(0.0, ηC - zx_face(z, ix, iy))
+        hW = max(0.0, ηC - zx_face(z, ix-1, iy))
+        hN = max(0.0, ηC - zy_face(z, ix, iy))
+        hS = max(0.0, ηC - zy_face(z, ix, iy-1))
 
-        hE = max(0.0, ηC - zE)
-        hW = max(0.0, ηC - zW)
+        # Cell-side hydrostatic corrections balance pressure even at a dry face.
+        pressure_x = (Pₓ[ix, iy] - 0.5 * g * hE^2) -
+                     (Pₓ[ix-1, iy] - 0.5 * g * hW^2)
+        pressure_y = (Pᵧ[ix, iy] - 0.5 * g * hN^2) -
+                     (Pᵧ[ix, iy-1] - 0.5 * g * hS^2)
 
-        hsrc_x = 0.5 * (hE + hW)
-        dzdx_face = (zE - zW) * _dx
-
-        # ---------------------------------------------------------------------
-        # y-source term
-        # ---------------------------------------------------------------------
-        zN = 0.5 * (z[ix, iy] + z[ix, iy+1])
-        zS = 0.5 * (z[ix, iy-1] + z[ix, iy])
-
-        hN = max(0.0, ηC - zN)
-        hS = max(0.0, ηC - zS)
-
-        hsrc_y = 0.5 * (hN + hS)
-        dzdy_face = (zN - zS) * _dy
-
-        # ---------------------------------------------------------------------
-        # Momentum updates first
-        # ---------------------------------------------------------------------
-        hu[ix, iy] -= dt * (
-            dxb(F₂, ix, iy) * _dx +
-            dyb(G₂, ix, iy) * _dy +
-            g * hsrc_x * dzdx_face
+        hu[ix, iy] -= (
+            (dtFx[ix, iy] * F₂[ix, iy] - dtFx[ix-1, iy] * F₂[ix-1, iy]) * _dx +
+            (dtGy[ix, iy] * G₂[ix, iy] - dtGy[ix, iy-1] * G₂[ix, iy-1]) * _dy +
+            dt * pressure_x * _dx
         )
-
-        hv[ix, iy] -= dt * (
-            dxb(F₃, ix, iy) * _dx +
-            dyb(G₃, ix, iy) * _dy +
-            g * hsrc_y * dzdy_face
+        hv[ix, iy] -= (
+            (dtFx[ix, iy] * F₃[ix, iy] - dtFx[ix-1, iy] * F₃[ix-1, iy]) * _dx +
+            (dtGy[ix, iy] * G₃[ix, iy] - dtGy[ix, iy-1] * G₃[ix, iy-1]) * _dy +
+            dt * pressure_y * _dy
         )
 
         # ---------------------------------------------------------------------
@@ -730,7 +718,7 @@ Update water depth and momentum using flux divergence and source terms.
 end
 
 """
-    left_bc!(h, hu, hv, g, dt, _dx)
+    left_bc!(h, hu, hv, z, g, dt, _dx)
 
 Apply the left-side radiative boundary condition.
 
@@ -743,12 +731,12 @@ Apply the left-side radiative boundary condition.
 # Returns
 - Nothing. Updates the left boundary column.
 """
-@parallel_indices (iy) function left_bc!(h, hu, hv, g, dt, _dx)
+@parallel_indices (iy) function left_bc!(h, hu, hv, z, g, dt, _dx)
     # Left boundary (ix=1)
     cL = bc_speed_x(h, hu, 1, iy, g) * dt * _dx
     αL = (cL - 1) / (cL + 1)
 
-    h1  = max(0.0, h[2, iy] + αL * (h[2, iy] - h[1, iy]))
+    h1  = boundary_depth(h[1, iy], z[1, iy], h[2, iy], z[2, iy], αL)
     hu1 = hu[2, iy] + αL * (hu[2, iy] - hu[1, iy])
     hv1 = hv[2, iy] + αL * (hv[2, iy] - hv[1, iy])
 
@@ -765,7 +753,7 @@ Apply the left-side radiative boundary condition.
 end
 
 """
-    right_bc!(h, hu, hv, g, dt, _dx)
+    right_bc!(h, hu, hv, z, g, dt, _dx)
 
 Apply the right-side radiative boundary condition.
 
@@ -778,14 +766,14 @@ Apply the right-side radiative boundary condition.
 # Returns
 - Nothing. Updates the right boundary column.
 """
-@parallel_indices (iy) function right_bc!(h, hu, hv, g, dt, _dx)
+@parallel_indices (iy) function right_bc!(h, hu, hv, z, g, dt, _dx)
     nx, ny = size(h)
 
     # Right boundary (ix=nx)
     cR = bc_speed_x(h, hu, nx, iy, g) * dt * _dx
     αR = (cR - 1) / (cR + 1)
 
-    hR  = max(0.0, h[end-1, iy]  + αR * (h[end-1, iy]  - h[end, iy]))
+    hR  = boundary_depth(h[end, iy], z[end, iy], h[end-1, iy], z[end-1, iy], αR)
     huR = hu[end-1, iy] + αR * (hu[end-1, iy] - hu[end, iy])
     hvR = hv[end-1, iy] + αR * (hv[end-1, iy] - hv[end, iy])
 
@@ -801,7 +789,7 @@ Apply the right-side radiative boundary condition.
 end
 
 """
-    bottom_bc!(h, hu, hv, g, dt, _dy)
+    bottom_bc!(h, hu, hv, z, g, dt, _dy)
 
 Apply the bottom-side radiative boundary condition.
 
@@ -814,12 +802,12 @@ Apply the bottom-side radiative boundary condition.
 # Returns
 - Nothing. Updates the bottom boundary row.
 """
-@parallel_indices (ix) function bottom_bc!(h, hu, hv, g, dt, _dy)
+@parallel_indices (ix) function bottom_bc!(h, hu, hv, z, g, dt, _dy)
     # Bottom boundary (iy=1)
     cB = bc_speed_y(h, hv, ix, 1, g) * dt * _dy
     αB = (cB - 1) / (cB + 1)
 
-    hB  = max(0.0, h[ix, 2]  + αB * (h[ix, 2]  - h[ix, 1]))
+    hB  = boundary_depth(h[ix, 1], z[ix, 1], h[ix, 2], z[ix, 2], αB)
     huB = hu[ix, 2] + αB * (hu[ix, 2] - hu[ix, 1])
     hvB = hv[ix, 2] + αB * (hv[ix, 2] - hv[ix, 1])
 
@@ -835,7 +823,7 @@ Apply the bottom-side radiative boundary condition.
 end
 
 """
-    top_bc!(h, hu, hv, g, dt, _dy)
+    top_bc!(h, hu, hv, z, g, dt, _dy)
 
 Apply the top-side radiative boundary condition.
 
@@ -848,14 +836,14 @@ Apply the top-side radiative boundary condition.
 # Returns
 - Nothing. Updates the top boundary row.
 """
-@parallel_indices (ix) function top_bc!(h, hu, hv, g, dt, _dy)
+@parallel_indices (ix) function top_bc!(h, hu, hv, z, g, dt, _dy)
     nx, ny = size(h)
 
     # Top boundary (iy=ny)
     cT = bc_speed_y(h, hv, ix, ny, g) * dt * _dy
     αT = (cT - 1) / (cT + 1)
 
-    hT  = max(0.0, h[ix, end-1]  + αT * (h[ix, end-1]  - h[ix, end]))
+    hT  = boundary_depth(h[ix, end], z[ix, end], h[ix, end-1], z[ix, end-1], αT)
     huT = hu[ix, end-1] + αT * (hu[ix, end-1] - hu[ix, end])
     hvT = hv[ix, end-1] + αT * (hv[ix, end-1] - hv[ix, end])
 
@@ -892,7 +880,7 @@ end
 """
     dry_cell_fix!(h, hu, hv, h_eps)
 
-Clamp dry or invalid cells to zero depth and momentum.
+Zero dry-cell momentum while retaining positive shallow water.
 
 # Arguments
 - h, hu, hv: State arrays updated in place.
@@ -905,11 +893,11 @@ Clamp dry or invalid cells to zero depth and momentum.
     nx, ny = size(h)
 
     if ix <= nx && iy <= ny
-        if !isfinite(h[ix, iy]) || h[ix, iy] <= h_eps
+        if h[ix, iy] <= 0.0
             h[ix, iy]  = 0.0
             hu[ix, iy] = 0.0
             hv[ix, iy] = 0.0
-        elseif !isfinite(hu[ix, iy]) || !isfinite(hv[ix, iy])
+        elseif h[ix, iy] <= h_eps
             hu[ix, iy] = 0.0
             hv[ix, iy] = 0.0
         end
@@ -1219,9 +1207,13 @@ Run the 2D well-balanced SWE solver with MPI domain decomposition.
 - print_error_metrics: Print steady-state error metrics on rank 0.
 - gpu_test_memory_restriction_workound: Use smaller domain for GPU tests.
 - domain_expansion_factor: Domain multiplier for sponge/BC padding.
+- mpi_dims: MPI layout, default (2, 2).
+- bathymetry, initial_surface: Optional functions of (x, y) for analytic cases.
+- domain_lengths: Physical x/y lengths before padding.
+- return_state: Return the interior state and elapsed simulation time for verification.
 
 # Returns
-- Nothing. Runs the simulation and writes outputs.
+- Nothing by default; gathered interior state on rank 0 if return_state=true.
 """
 @views function swe2d_topography_frames(nx_aoi, ny_aoi;
             nt=0,
@@ -1231,10 +1223,11 @@ Run the 2D well-balanced SWE solver with MPI domain decomposition.
             debug_roi=false,
             print_error_metrics=true,
             gpu_test_memory_restriction_workound=false,
-            domain_expansion_factor=3.0)
+            domain_expansion_factor=3.0,
+            bathymetry=nothing, initial_surface=(x, y) -> 0.0,
+            domain_lengths=(50.0, 50.0), mpi_dims=(2, 2), return_state=false)
     # physics and numerics
-    lx_aoi = 50.0 # aoi = area of interest
-    ly_aoi = 50.0
+    lx_aoi, ly_aoi = domain_lengths
 
     # Multiply domain size to allow for sponge layer and BCs
     if gpu_test_memory_restriction_workound
@@ -1250,22 +1243,31 @@ Run the 2D well-balanced SWE solver with MPI domain decomposition.
     ny_global = round(Int, domain_expansion_factor * ny_aoi)
 
     # get num ranks
-    if !MPI.Initialized()
+    owns_mpi = !MPI.Initialized()
+    if owns_mpi
         MPI.Init()
     end
     nprocs = MPI.Comm_size(MPI.COMM_WORLD)
 
-    # Get ideal 2D topology
-    dims_mpi = [0, 0]
-    MPI.Dims_create!(nprocs, dims_mpi)
+    # Force a 2D MPI topology.
+    dims_mpi = collect(mpi_dims)
+    if prod(dims_mpi) != nprocs
+        error("Requested MPI topology $(dims_mpi[1])x$(dims_mpi[2]) requires $(prod(dims_mpi)) ranks, but got $nprocs. Run with: mpiexec -n $(prod(dims_mpi)) julia --project src/xpu/2d_swe_multi_xpu_wb.jl")
+    end
 
     # Compute local chunk sizes (+2 for halos)
-    nx = round(Int, (nx_global - 2) / dims_mpi[1]) + 2
-    ny = round(Int, (ny_global - 2) / dims_mpi[2]) + 2
+    if (nx_global - 2) % dims_mpi[1] != 0 || (ny_global - 2) % dims_mpi[2] != 0
+        error("Interior grid dimensions must be divisible by the MPI topology.")
+    end
+    nx = (nx_global - 2) ÷ dims_mpi[1] + 2
+    ny = (ny_global - 2) ÷ dims_mpi[2] + 2
 
     # Init global grid and get local grid info
     me, dims, nprocs, coords, comm_cart = init_global_grid(
         nx, ny, 1; 
+        dimx = dims_mpi[1],
+        dimy = dims_mpi[2],
+        dimz = 1,
         init_MPI = false, 
         select_device = false
     )
@@ -1273,7 +1275,7 @@ Run the 2D well-balanced SWE solver with MPI domain decomposition.
     neighbors_x = MPI.Cart_shift(comm_cart, 0, 1) 
     neighbors_y = MPI.Cart_shift(comm_cart, 1, 1)
     
-    b_width     = (8, 8, 0)
+    b_width = (min(8, (nx-2) ÷ 2), min(8, (ny-2) ÷ 2), 0)
 
     if nt==0
         nt   = Int(nt_nx_multiplier * nx_aoi)
@@ -1324,6 +1326,8 @@ Run the 2D well-balanced SWE solver with MPI domain decomposition.
     G₁ = @zeros(nx, ny - 1)
     G₂ = @zeros(nx, ny - 1)
     G₃ = @zeros(nx, ny - 1)
+    Pₓ = @zeros(nx - 1, ny)
+    Pᵧ = @zeros(nx, ny - 1)
 
     max_speed_x = @zeros(nx - 1, ny)
     max_speed_y = @zeros(nx, ny - 1)
@@ -1341,7 +1345,10 @@ Run the 2D well-balanced SWE solver with MPI domain decomposition.
     # ]
 
     ## DEFAULT TOPOGRAPHY: Load from file and interpolate to the grid
-    if !gpu_test_memory_restriction_workound
+    if bathymetry !== nothing
+        z = Data.Array([bathymetry(x, y) for x in xs, y in ys])
+        η0 = Data.Array([initial_surface(x, y) for x in xs, y in ys])
+    elseif !gpu_test_memory_restriction_workound
         z, η0 = load_topography_data(nx_aoi, ny_aoi, nx, ny, me, coords, comm_cart)
     else
         # -------------------------------------------------------------------------
@@ -1390,8 +1397,10 @@ Run the 2D well-balanced SWE solver with MPI domain decomposition.
     #     η0[i, j] += A_spike * exp(-((x - x_c)^2 + (y - y_c)^2) / (2 * σ_spike^2))
     # end
 
-    hmin  = 1e-2
+    hmin  = h_eps
     h .= max.(0.0, η0 .- z)
+    update_halo!(z, h, hu, hv)
+    h_initial = copy(h)
 
     dt_drain = @zeros(nx, ny)
 
@@ -1563,13 +1572,9 @@ Run the 2D well-balanced SWE solver with MPI domain decomposition.
     for it in 1:nt
         @parallel compute_maxspeed!(max_speed_x, max_speed_y, h, hu, hv, z, g, vel_eps)
         
-        if 0.99 / (maximum(max_speed_x) * _dx + maximum(max_speed_y) * _dy) < dt 
-            println("Warning: Local dt = ", 0.99 / (maximum(max_speed_x) * _dx + maximum(max_speed_y) * _dy), " is bigger than the current CLF, at iteration ", it)
-        end
-
-        if it % 10 == 0 || it == 1
-            dt =  0.9 / (max_g(max_speed_x) * _dx + max_g(max_speed_y) * _dy)
-        end
+        speed_rate = max_g(max_speed_x) * _dx + max_g(max_speed_y) * _dy
+        speed_rate == 0.0 && break
+        dt = 0.45 / speed_rate
 
         time += dt
 
@@ -1579,7 +1584,7 @@ Run the 2D well-balanced SWE solver with MPI domain decomposition.
 
         @parallel compute_1st_2nd_and_3th_flux!(
             F₁, F₂, F₃,
-            G₁, G₂, G₃,
+            G₁, G₂, G₃, Pₓ, Pᵧ,
             hu, hv, h, z, g,
             max_speed_x, max_speed_y, vel_eps
         )
@@ -1601,29 +1606,26 @@ Run the 2D well-balanced SWE solver with MPI domain decomposition.
             dt
         )
         
-        @hide_communication b_width begin
-            @parallel update_height_momentum!(
-                h, hu, hv,
-                F₁, G₁, F₂, F₃, G₂, G₃, dtFx, dtGy,
-                z, g, dt, _dx, _dy
-            )           
-            update_halo!(h, hu, hv)
-        end
+        @parallel update_height_momentum!(
+            h, hu, hv,
+            F₁, G₁, F₂, F₃, G₂, G₃, dtFx, dtGy, Pₓ, Pᵧ,
+            z, g, dt, _dx, _dy
+        )
 
         @parallel dry_cell_fix!(h, hu, hv, hmin)
 
         # Apply BCs only on ranks that border the global domain boundaries
         if neighbors_x[1] == MPI.PROC_NULL
-            @parallel (1:ny) left_bc!(h, hu, hv, g, dt, _dx)
+            @parallel (1:ny) left_bc!(h, hu, hv, z, g, dt, _dx)
         end
         if neighbors_x[2] == MPI.PROC_NULL
-            @parallel (1:ny) right_bc!(h, hu, hv, g, dt, _dx)
+            @parallel (1:ny) right_bc!(h, hu, hv, z, g, dt, _dx)
         end
         if neighbors_y[1] == MPI.PROC_NULL
-            @parallel (1:nx) bottom_bc!(h, hu, hv, g, dt, _dy)
+            @parallel (1:nx) bottom_bc!(h, hu, hv, z, g, dt, _dy)
         end
         if neighbors_y[2] == MPI.PROC_NULL
-            @parallel (1:nx) top_bc!(h, hu, hv, g, dt, _dy)
+            @parallel (1:nx) top_bc!(h, hu, hv, z, g, dt, _dy)
         end
         
         # Would need to only apply sponge layer on ranks that border the global domain boundaries
@@ -1632,6 +1634,7 @@ Run the 2D well-balanced SWE solver with MPI domain decomposition.
         # @parallel sponge_layer!(hu, hv, σ)
         
         @parallel dry_cell_fix!(h, hu, hv, hmin)
+        update_halo!(h, hu, hv)
 
         if do_viz && it % nvis == 0
 
@@ -1670,38 +1673,10 @@ Run the 2D well-balanced SWE solver with MPI domain decomposition.
     # -------------------------------------------------------------------------
 
 
-    η = h .+ z
-
-    # Compare against the initial free surface η0
-    err = abs.(η .- η0)
-
-    # Wet-cell mask:
-    # use cells that were initially wet and are still meaningfully wet
-    wet_mask = (η0 .- z .> h_eps) .& (h .> h_eps)
-
-    local_nwet = sum(wet_mask)
-    nwet = MPI.Allreduce(local_nwet, MPI.SUM, comm_cart)
-    
-    local_err_max = local_nwet > 0 ? maximum(err[wet_mask]) : 0.0
-    local_scale_max = local_nwet > 0 ? maximum(abs.(η0[wet_mask])) : 0.0
-
-    Linf_abs = MPI.Allreduce(local_err_max, MPI.MAX, comm_cart)
-    η0_scale = MPI.Allreduce(local_scale_max, MPI.MAX, comm_cart)
-
+    local_error = maximum(abs.(h[2:end-1, 2:end-1] .- h_initial[2:end-1, 2:end-1]))
+    Linf_abs = MPI.Allreduce(local_error, MPI.MAX, comm_cart)
     if me == 0 && print_error_metrics
-        if nwet > 0
-            # A sensible relative L∞ error:
-            # normalize by the largest initial free-surface magnitude on wet cells
-            Linf_rel = η0_scale > 0 ? Linf_abs / η0_scale : Linf_abs
-
-            println("wet cells used: ", nwet)
-            println("steady-state L∞ absolute error on wet cells: ", Linf_abs)
-            println("steady-state L∞ relative error on wet cells: ", Linf_rel)
-        else
-            println("No wet cells found for steady-state error evaluation.")
-            Linf_abs = NaN
-            Linf_rel = NaN
-        end
+        println("steady-state L∞ depth error (all interior cells): ", Linf_abs)
     end
     if me == 0
         # print time
@@ -1713,29 +1688,46 @@ Run the 2D well-balanced SWE solver with MPI domain decomposition.
         end
     end
 
-    finalize_global_grid()
-    return nothing
-end
-
-input_nx = 125
-input_ny = 125
-num_repetitions = 1
-
-for i in 1:length(ARGS)
-    if ARGS[i] == "--nx"
-        global input_nx = parse(Int, ARGS[i+1])
-    elseif ARGS[i] == "--ny"
-        global input_ny = parse(Int, ARGS[i+1])
-    elseif ARGS[i] == "--dt_multiplier"
-        global nt_nx_multiplier = parse(Float64, ARGS[i+1])
+    result = nothing
+    if return_state
+        h_global = me == 0 ? zeros(nx_global-2, ny_global-2) : nothing
+        hu_global = me == 0 ? zeros(nx_global-2, ny_global-2) : nothing
+        hv_global = me == 0 ? zeros(nx_global-2, ny_global-2) : nothing
+        z_global = me == 0 ? zeros(nx_global-2, ny_global-2) : nothing
+        gather!(Array(h)[2:end-1, 2:end-1], h_global)
+        gather!(Array(hu)[2:end-1, 2:end-1], hu_global)
+        gather!(Array(hv)[2:end-1, 2:end-1], hv_global)
+        gather!(Array(z)[2:end-1, 2:end-1], z_global)
+        if me == 0
+            result = (h=h_global, hu=hu_global, hv=hv_global, z=z_global,
+                      time=time, depth_error=Linf_abs)
+        end
     end
+    finalize_global_grid(finalize_MPI=owns_mpi)
+    return result
 end
 
-@time swe2d_topography_frames(input_nx, input_ny; nt=2000,
-    outdir = "docs/frames/frames_topography_multi",
-    do_viz = false,
-    force_array_output = false,
-    print_error_metrics = false,
-    gpu_test_memory_restriction_workound = true,
-    domain_expansion_factor = 3.0
-)
+if abspath(PROGRAM_FILE) == @__FILE__
+    input_nx = 500
+    input_ny = 500
+    num_repetitions = 1
+
+    for i in 1:length(ARGS)
+        if ARGS[i] == "--nx"
+            global input_nx = parse(Int, ARGS[i+1])
+        elseif ARGS[i] == "--ny"
+            global input_ny = parse(Int, ARGS[i+1])
+        elseif ARGS[i] == "--dt_multiplier"
+            global nt_nx_multiplier = parse(Float64, ARGS[i+1])
+        end
+    end
+
+    @time swe2d_topography_frames(input_nx, input_ny; nt=2000,
+        outdir = "docs/frames/frames_topography_multi",
+        do_viz = false,
+        force_array_output = false,
+        print_error_metrics = false,
+        gpu_test_memory_restriction_workound = true,
+        domain_expansion_factor = 3.0
+    )
+end

@@ -1,0 +1,11 @@
+final_volume_m3 = 7.187305328653362e6
+steps = 3903
+initial_volume_m3 = 1.9684617724713966e7
+max_mass_balance_error_m3 = 1.564621925354004e-7
+relative_mass_balance_error = 7.948449633287147e-15
+elapsed_seconds = 36.845102071762085
+steady_depth_error_m = 0.0
+frames = 401
+steady_momentum_m2_s = 0.0
+minimum_raw_depth_m = 0.0
+net_outflow_m3 = 1.249731239606066e7

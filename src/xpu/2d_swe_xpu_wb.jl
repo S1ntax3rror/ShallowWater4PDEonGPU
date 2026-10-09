@@ -2,8 +2,12 @@ using Serialization
 using DelimitedFiles
 
 const HAS_MAKIE = try
-    @eval using GLMakie
-    true
+    if get(ENV, "SWE_HEADLESS", "false") == "true"
+        false
+    else
+        @eval using GLMakie
+        true
+    end
 catch
     @info "GLMakie not found. Falling back to array output."
     false
@@ -26,7 +30,9 @@ end
 
 using Printf
 
-const h_eps = 1e-2
+const h_eps = 1e-10
+
+include("wet_dry_reconstruction.jl")
 const nt_nx_multiplier = 4
 
 """
@@ -161,30 +167,30 @@ Compute the free-surface elevation eta = h + z at (ix,iy).
 """
     zx_face(z, ix, iy)
 
-Compute the x-face average of bathymetry between (ix,iy) and (ix+1,iy).
+Compute the common x-face bed barrier between (ix,iy) and (ix+1,iy).
 
 # Arguments
 - z: Bathymetry array.
 - ix, iy: Cell indices.
 
 # Returns
-- Scalar face-averaged bathymetry in x.
+- Maximum of the two adjacent bed elevations in x.
 """
-@inline zx_face(z, ix, iy) = 0.5 * (z[ix, iy] + z[ix+1, iy])
+@inline zx_face(z, ix, iy) = face_bed(z[ix, iy], z[ix+1, iy])
 
 """
     zy_face(z, ix, iy)
 
-Compute the y-face average of bathymetry between (ix,iy) and (ix,iy+1).
+Compute the common y-face bed barrier between (ix,iy) and (ix,iy+1).
 
 # Arguments
 - z: Bathymetry array.
 - ix, iy: Cell indices.
 
 # Returns
-- Scalar face-averaged bathymetry in y.
+- Maximum of the two adjacent bed elevations in y.
 """
-@inline zy_face(z, ix, iy) = 0.5 * (z[ix, iy] + z[ix, iy+1])
+@inline zy_face(z, ix, iy) = face_bed(z[ix, iy], z[ix, iy+1])
 
 """
     hx_L(h, z, ix, iy)
@@ -437,10 +443,12 @@ Compute the draining timestep constraint per cell based on outgoing fluxes.
         drain_rate = out_x * _dx + out_y * _dy
 
         if drain_rate > 0.0
-            dt_drain[ix, iy] = min(dt, h[ix, iy] / drain_rate)
+            dt_drain[ix, iy] = min(dt, max(0.0, h[ix, iy]) / drain_rate)
         else
             dt_drain[ix, iy] = dt
         end
+    elseif ix <= nx && iy <= ny
+        dt_drain[ix, iy] = dt
     end
 
     return nothing
@@ -495,14 +503,15 @@ Compute face-wise effective timesteps using upwinded draining limits.
 end
 
 """
-    compute_1st_2nd_and_3th_flux!(F₁, F₂, F₃, G₁, G₂, G₃, hu, hv, h, z, g,
+    compute_1st_2nd_and_3th_flux!(F₁, F₂, F₃, G₁, G₂, G₃, Pₓ, Pᵧ, hu, hv, h, z, g,
                                  max_speed_x, max_speed_y, vel_eps)
 
-Compute Rusanov fluxes for mass and momentum in both x and y directions.
+Compute hydrostatically reconstructed Rusanov transport and pressure fluxes.
 
 # Arguments
-- F₁, F₂, F₃: Fluxes on x-faces (mass, x-momentum, y-momentum).
-- G₁, G₂, G₃: Fluxes on y-faces (mass, x-momentum, y-momentum).
+- F₁, F₂, F₃: Transport fluxes on x-faces (mass, x-momentum, y-momentum).
+- Pₓ, Pᵧ: Hydrostatic pressure fluxes, kept separate from draining-limited transport.
+- G₁, G₂, G₃: Transport fluxes on y-faces (mass, x-momentum, y-momentum).
 - hu, hv, h: Momentum and depth fields.
 - z: Bathymetry field.
 - g: Gravity constant.
@@ -514,7 +523,7 @@ Compute Rusanov fluxes for mass and momentum in both x and y directions.
 """
 @parallel_indices (ix, iy) function compute_1st_2nd_and_3th_flux!(
     F₁, F₂, F₃,
-    G₁, G₂, G₃,
+    G₁, G₂, G₃, Pₓ, Pᵧ,
     hu, hv, h, z, g,
     max_speed_x, max_speed_y,
     vel_eps
@@ -527,9 +536,6 @@ Compute Rusanov fluxes for mass and momentum in both x and y directions.
     if ix <= nx - 1 && iy <= ny
         hL = hx_L(h, z, ix, iy)
         hR = hx_R(h, z, ix, iy)
-
-        ηL = eta(h, z, ix, iy)
-        ηR = eta(h, z, ix+1, iy)
 
         uL = vel_u(h, hu, ix, iy, vel_eps)
         uR = vel_u(h, hu, ix+1, iy, vel_eps)
@@ -549,13 +555,14 @@ Compute Rusanov fluxes for mass and momentum in both x and y directions.
         # Mass / free-surface flux
         F₁[ix, iy] =
             0.5 * (huL + huR) -
-            0.5 * ax * (ηR - ηL)
+            0.5 * ax * (hR - hL)
 
-        # x-momentum flux
+        # Drain only transport; hydrostatic pressure keeps the global timestep.
+        Pₓ[ix, iy] = 0.25 * g * (hL^2 + hR^2)
         F₂[ix, iy] =
             0.5 * (
-                huL * uL + 0.5 * g * hL^2 +
-                huR * uR + 0.5 * g * hR^2
+                huL * uL +
+                huR * uR
             ) -
             0.5 * ax * (huR - huL)
 
@@ -575,9 +582,6 @@ Compute Rusanov fluxes for mass and momentum in both x and y directions.
         hL = hy_L(h, z, ix, iy)
         hR = hy_R(h, z, ix, iy)
 
-        ηL = eta(h, z, ix, iy)
-        ηR = eta(h, z, ix, iy+1)
-
         uL = vel_u(h, hu, ix, iy, vel_eps)
         uR = vel_u(h, hu, ix, iy+1, vel_eps)
 
@@ -594,7 +598,7 @@ Compute Rusanov fluxes for mass and momentum in both x and y directions.
         # Mass / free-surface flux
         G₁[ix, iy] =
             0.5 * (hvL + hvR) -
-            0.5 * ay * (ηR - ηL)
+            0.5 * ay * (hR - hL)
 
         # x-momentum transported in y
         G₂[ix, iy] =
@@ -604,11 +608,11 @@ Compute Rusanov fluxes for mass and momentum in both x and y directions.
             ) -
             0.5 * ay * (huR - huL)
 
-        # y-momentum flux
+        Pᵧ[ix, iy] = 0.25 * g * (hL^2 + hR^2)
         G₃[ix, iy] =
             0.5 * (
-                hvL * vL + 0.5 * g * hL^2 +
-                hvR * vR + 0.5 * g * hR^2
+                hvL * vL +
+                hvR * vR
             ) -
             0.5 * ay * (hvR - hvL)
     end
@@ -617,7 +621,7 @@ Compute Rusanov fluxes for mass and momentum in both x and y directions.
 end
 
 """
-    update_height_momentum!(h, hu, hv, F₁, G₁, F₂, F₃, G₂, G₃, dtFx, dtGy,
+    update_height_momentum!(h, hu, hv, F₁, G₁, F₂, F₃, G₂, G₃, dtFx, dtGy, Pₓ, Pᵧ,
                             z, g, dt, _dx, _dy)
 
 Update water depth and momentum using flux divergence and source terms.
@@ -625,7 +629,8 @@ Update water depth and momentum using flux divergence and source terms.
 # Arguments
 - h, hu, hv: State arrays updated in place.
 - F₁, G₁, F₂, F₃, G₂, G₃: Flux arrays.
-- dtFx, dtGy: Face-wise timesteps for mass fluxes.
+- dtFx, dtGy: Donor-limited timesteps for mass and momentum transport.
+- Pₓ, Pᵧ: Hydrostatic pressure fluxes using the global timestep.
 - z: Bathymetry field.
 - g: Gravity constant.
 - dt: Global timestep.
@@ -636,7 +641,7 @@ Update water depth and momentum using flux divergence and source terms.
 """
 @parallel_indices (ix, iy) function update_height_momentum!(
     h, hu, hv,
-    F₁, G₁, F₂, F₃, G₂, G₃, dtFx, dtGy,
+    F₁, G₁, F₂, F₃, G₂, G₃, dtFx, dtGy, Pₓ, Pᵧ,
     z, g, dt, _dx, _dy
 )
     nx, ny = size(h)
@@ -644,43 +649,26 @@ Update water depth and momentum using flux divergence and source terms.
     if 2 <= ix <= nx-1 && 2 <= iy <= ny-1
         ηC = eta(h, z, ix, iy)
 
-        # ---------------------------------------------------------------------
-        # x-source term
-        # ---------------------------------------------------------------------
-        zE = 0.5 * (z[ix, iy] + z[ix+1, iy])
-        zW = 0.5 * (z[ix-1, iy] + z[ix, iy])
+        hE = max(0.0, ηC - zx_face(z, ix, iy))
+        hW = max(0.0, ηC - zx_face(z, ix-1, iy))
+        hN = max(0.0, ηC - zy_face(z, ix, iy))
+        hS = max(0.0, ηC - zy_face(z, ix, iy-1))
 
-        hE = max(0.0, ηC - zE)
-        hW = max(0.0, ηC - zW)
+        # Cell-side hydrostatic corrections balance pressure even at a dry face.
+        pressure_x = (Pₓ[ix, iy] - 0.5 * g * hE^2) -
+                     (Pₓ[ix-1, iy] - 0.5 * g * hW^2)
+        pressure_y = (Pᵧ[ix, iy] - 0.5 * g * hN^2) -
+                     (Pᵧ[ix, iy-1] - 0.5 * g * hS^2)
 
-        hsrc_x = 0.5 * (hE + hW)
-        dzdx_face = (zE - zW) * _dx
-
-        # ---------------------------------------------------------------------
-        # y-source term
-        # ---------------------------------------------------------------------
-        zN = 0.5 * (z[ix, iy] + z[ix, iy+1])
-        zS = 0.5 * (z[ix, iy-1] + z[ix, iy])
-
-        hN = max(0.0, ηC - zN)
-        hS = max(0.0, ηC - zS)
-
-        hsrc_y = 0.5 * (hN + hS)
-        dzdy_face = (zN - zS) * _dy
-
-        # ---------------------------------------------------------------------
-        # Momentum updates first
-        # ---------------------------------------------------------------------
-        hu[ix, iy] -= dt * (
-            dxb(F₂, ix, iy) * _dx +
-            dyb(G₂, ix, iy) * _dy +
-            g * hsrc_x * dzdx_face
+        hu[ix, iy] -= (
+            (dtFx[ix, iy] * F₂[ix, iy] - dtFx[ix-1, iy] * F₂[ix-1, iy]) * _dx +
+            (dtGy[ix, iy] * G₂[ix, iy] - dtGy[ix, iy-1] * G₂[ix, iy-1]) * _dy +
+            dt * pressure_x * _dx
         )
-
-        hv[ix, iy] -= dt * (
-            dxb(F₃, ix, iy) * _dx +
-            dyb(G₃, ix, iy) * _dy +
-            g * hsrc_y * dzdy_face
+        hv[ix, iy] -= (
+            (dtFx[ix, iy] * F₃[ix, iy] - dtFx[ix-1, iy] * F₃[ix-1, iy]) * _dx +
+            (dtGy[ix, iy] * G₃[ix, iy] - dtGy[ix, iy-1] * G₃[ix, iy-1]) * _dy +
+            dt * pressure_y * _dy
         )
 
         # ---------------------------------------------------------------------
@@ -701,7 +689,7 @@ Update water depth and momentum using flux divergence and source terms.
 end
 
 """
-    left_right_bc!(h, hu, hv, g, dt, _dx)
+    left_right_bc!(h, hu, hv, z, g, dt, _dx)
 
 Apply radiative boundary conditions on the left and right edges.
 
@@ -714,14 +702,14 @@ Apply radiative boundary conditions on the left and right edges.
 # Returns
 - Nothing. Updates boundary columns in place.
 """
-@parallel_indices (iy) function left_right_bc!(h, hu, hv, g, dt, _dx)
+@parallel_indices (iy) function left_right_bc!(h, hu, hv, z, g, dt, _dx)
     nx, ny = size(h)
 
     # Left boundary (ix=1)
     cL = bc_speed_x(h, hu, 1, iy, g) * dt * _dx
     αL = (cL - 1) / (cL + 1)
 
-    h1  = max(0.0, h[2, iy] + αL * (h[2, iy] - h[1, iy]))
+    h1  = boundary_depth(h[1, iy], z[1, iy], h[2, iy], z[2, iy], αL)
     hu1 = hu[2, iy] + αL * (hu[2, iy] - hu[1, iy])
     hv1 = hv[2, iy] + αL * (hv[2, iy] - hv[1, iy])
 
@@ -733,7 +721,7 @@ Apply radiative boundary conditions on the left and right edges.
     cR = bc_speed_x(h, hu, nx, iy, g) * dt * _dx
     αR = (cR - 1) / (cR + 1)
 
-    hR  = max(0.0, h[end-1, iy]  + αR * (h[end-1, iy]  - h[end, iy]))
+    hR  = boundary_depth(h[end, iy], z[end, iy], h[end-1, iy], z[end-1, iy], αR)
     huR = hu[end-1, iy] + αR * (hu[end-1, iy] - hu[end, iy])
     hvR = hv[end-1, iy] + αR * (hv[end-1, iy] - hv[end, iy])
 
@@ -753,7 +741,7 @@ Apply radiative boundary conditions on the left and right edges.
 end
 
 """
-    bottom_top_bc!(h, hu, hv, g, dt, _dy)
+    bottom_top_bc!(h, hu, hv, z, g, dt, _dy)
 
 Apply radiative boundary conditions on the bottom and top edges.
 
@@ -766,14 +754,14 @@ Apply radiative boundary conditions on the bottom and top edges.
 # Returns
 - Nothing. Updates boundary rows in place.
 """
-@parallel_indices (ix) function bottom_top_bc!(h, hu, hv, g, dt, _dy)
+@parallel_indices (ix) function bottom_top_bc!(h, hu, hv, z, g, dt, _dy)
     nx, ny = size(h)
 
     # Bottom boundary (iy=1)
     cB = bc_speed_y(h, hv, ix, 1, g) * dt * _dy
     αB = (cB - 1) / (cB + 1)
 
-    hB  = max(0.0, h[ix, 2]  + αB * (h[ix, 2]  - h[ix, 1]))
+    hB  = boundary_depth(h[ix, 1], z[ix, 1], h[ix, 2], z[ix, 2], αB)
     huB = hu[ix, 2] + αB * (hu[ix, 2] - hu[ix, 1])
     hvB = hv[ix, 2] + αB * (hv[ix, 2] - hv[ix, 1])
 
@@ -785,7 +773,7 @@ Apply radiative boundary conditions on the bottom and top edges.
     cT = bc_speed_y(h, hv, ix, ny, g) * dt * _dy
     αT = (cT - 1) / (cT + 1)
 
-    hT  = max(0.0, h[ix, end-1]  + αT * (h[ix, end-1]  - h[ix, end]))
+    hT  = boundary_depth(h[ix, end], z[ix, end], h[ix, end-1], z[ix, end-1], αT)
     huT = hu[ix, end-1] + αT * (hu[ix, end-1] - hu[ix, end])
     hvT = hv[ix, end-1] + αT * (hv[ix, end-1] - hv[ix, end])
 
@@ -825,7 +813,7 @@ end
 """
     dry_cell_fix!(h, hu, hv, h_eps)
 
-Clamp dry or invalid cells to zero depth and momentum.
+Zero dry-cell momentum while retaining positive shallow water.
 
 # Arguments
 - h, hu, hv: State arrays updated in place.
@@ -838,11 +826,11 @@ Clamp dry or invalid cells to zero depth and momentum.
     nx, ny = size(h)
 
     if ix <= nx && iy <= ny
-        if !isfinite(h[ix, iy]) || h[ix, iy] <= h_eps
+        if h[ix, iy] <= 0.0
             h[ix, iy]  = 0.0
             hu[ix, iy] = 0.0
             hv[ix, iy] = 0.0
-        elseif !isfinite(hu[ix, iy]) || !isfinite(hv[ix, iy])
+        elseif h[ix, iy] <= h_eps
             hu[ix, iy] = 0.0
             hv[ix, iy] = 0.0
         end
@@ -1144,7 +1132,9 @@ end
 """
     swe2d_topography_frames(; nt=0, nx_aoi=250, ny_aoi=250, domain_expansion_factor=3,
                             outdir="frames", do_viz=true, force_array_output=false,
-                            perf_test=false, debug_roi=false)
+                            perf_test=false, debug_roi=false,
+        bathymetry=nothing, initial_surface=(x, y) -> 0.0,
+        domain_lengths=(154 * 50.0, 124 * 50.0), sponge=true, return_state=false)
 
 Run the 2D well-balanced SWE solver over topography and optionally output frames.
 
@@ -1152,22 +1142,28 @@ Run the 2D well-balanced SWE solver over topography and optionally output frames
 - nt: Number of timesteps (0 uses an nx-based default).
 - nx_aoi, ny_aoi: Resolution of the area of interest.
 - domain_expansion_factor: Domain multiplier for sponge/BC padding.
+- bathymetry, initial_surface: Optional functions of (x, y) for analytic cases.
+- domain_lengths: Physical x/y lengths before padding.
+- return_state: Return the interior state and elapsed simulation time for verification.
 - outdir: Output directory for frames or arrays.
 - do_viz: Enable visualization or array output.
 - force_array_output: Force array output even if Makie is available.
 - perf_test: Use a synthetic initial condition for performance testing.
+- sponge: Enable momentum damping near physical boundaries.
 - debug_roi: Visualize the full domain instead of the ROI.
 
 # Returns
-- Linf_abs: Absolute L-infinity error on wet cells (NaN if not evaluated).
+- Linf_abs: Maximum depth change over all interior cells (or state if return_state=true).
 """
-@views function swe2d_topography_frames(; nt=0, nx_aoi=250, ny_aoi=250, domain_expansion_factor=3, outdir = "frames", do_viz = true, force_array_output=false, perf_test=false, debug_roi=false)
+@views function swe2d_topography_frames(;
+        nt=0, nx_aoi=250, ny_aoi=250, domain_expansion_factor=3,
+        outdir="frames", do_viz=true, force_array_output=false, perf_test=false,
+        debug_roi=false, bathymetry=nothing, initial_surface=(x, y) -> 0.0,
+        domain_lengths=(154 * 50.0, 124 * 50.0), sponge=true, return_state=false)
     # physics and numerics
-    lx_aoi = 154 * 50 # aoi = area of interest
-    ly_aoi = 124 * 50 
+    lx_aoi, ly_aoi = domain_lengths
 
     # Multiply domain size to allow for sponge layer and BCs
-    domain_expansion_factor = 3
 
     lx = domain_expansion_factor * lx_aoi
     ly = domain_expansion_factor * ly_aoi
@@ -1219,6 +1215,8 @@ Run the 2D well-balanced SWE solver over topography and optionally output frames
     G₁ = @zeros(nx, ny - 1)
     G₂ = @zeros(nx, ny - 1)
     G₃ = @zeros(nx, ny - 1)
+    Pₓ = @zeros(nx - 1, ny)
+    Pᵧ = @zeros(nx, ny - 1)
 
     max_speed_x = @zeros(nx - 1, ny)
     max_speed_y = @zeros(nx, ny - 1)
@@ -1268,7 +1266,10 @@ Run the 2D well-balanced SWE solver over topography and optionally output frames
 
     # z, η0 = load_topography_data(domain_expansion_factor, nx_aoi, ny_aoi)
 
-    if !perf_test
+    if bathymetry !== nothing
+        z = Data.Array([bathymetry(x, y) for x in xs, y in ys])
+        η0 = Data.Array([initial_surface(x, y) for x in xs, y in ys])
+    elseif !perf_test
         z, η0, lx_aoi, ly_aoi= load_topography_data(domain_expansion_factor, nx_aoi, ny_aoi, xs, ys)
     else
         z_cpu  = zeros(nx, ny)
@@ -1308,8 +1309,9 @@ Run the 2D well-balanced SWE solver over topography and optionally output frames
     #     η0[i, j] += A_spike * exp(-((x - x_c)^2 + (y - y_c)^2) / (2 * σ_spike^2))
     # end
 
-    hmin  = 1e-2
+    hmin  = h_eps
     h .= max.(0.0, η0 .- z)
+    h_initial = copy(h)
 
     dt_drain = @zeros(nx, ny)
 
@@ -1471,7 +1473,9 @@ Run the 2D well-balanced SWE solver over topography and optionally output frames
     for it in 1:nt
         @parallel compute_maxspeed!(max_speed_x, max_speed_y, h, hu, hv, z, g, vel_eps)
 
-        dt =  0.99 / (maximum(max_speed_x) * _dx + maximum(max_speed_y) * _dy)
+        speed_rate = maximum(max_speed_x) * _dx + maximum(max_speed_y) * _dy
+        speed_rate == 0.0 && break
+        dt = 0.45 / speed_rate
         time += dt
 
         if !isfinite(dt)
@@ -1480,7 +1484,7 @@ Run the 2D well-balanced SWE solver over topography and optionally output frames
 
         @parallel compute_1st_2nd_and_3th_flux!(
             F₁, F₂, F₃,
-            G₁, G₂, G₃,
+            G₁, G₂, G₃, Pₓ, Pᵧ,
             hu, hv, h, z, g,
             max_speed_x, max_speed_y, vel_eps
         )
@@ -1502,16 +1506,18 @@ Run the 2D well-balanced SWE solver over topography and optionally output frames
 
         @parallel update_height_momentum!(
             h, hu, hv,
-            F₁, G₁, F₂, F₃, G₂, G₃, dtFx, dtGy,
+            F₁, G₁, F₂, F₃, G₂, G₃, dtFx, dtGy, Pₓ, Pᵧ,
             z, g, dt, _dx, _dy
         )
 
         @parallel dry_cell_fix!(h, hu, hv, hmin)
 
-        @parallel left_right_bc!(h, hu, hv, g, dt, _dx)
-        @parallel bottom_top_bc!(h, hu, hv, g, dt, _dy)
+        @parallel (1:ny) left_right_bc!(h, hu, hv, z, g, dt, _dx)
+        @parallel (1:nx) bottom_top_bc!(h, hu, hv, z, g, dt, _dy)
 
-        @parallel sponge_layer!(hu, hv, σ)
+        if sponge
+            @parallel sponge_layer!(hu, hv, σ)
+        end
         @parallel dry_cell_fix!(h, hu, hv, hmin)
 
         if it % nvis == 0
@@ -1542,37 +1548,11 @@ Run the 2D well-balanced SWE solver over topography and optionally output frames
         end
     end
 
-    # -------------------------------------------------------------------------
-    # Steady-state error on wet cells onlyabsorbing boundary conditions for the numerical simulation of waves
-    # -------------------------------------------------------------------------
-
-    η = h .+ z
-
-    # Compare against the initial free surface η0
-    err = abs.(η .- η0)
-
-    # Wet-cell mask:
-    # use cells that were initially wet and are still meaningfully wet
-    wet_mask = (η0 .- z .> h_eps) .& (h .> h_eps)
-
-    nwet = sum(wet_mask)
-
-    if nwet > 0 && !perf_test
-        Linf_abs = maximum(err[wet_mask])
-
-        # A sensible relative L∞ error:
-        # normalize by the largest initial free-surface magnitude on wet cells
-        η0_scale = maximum(abs.(η0[wet_mask]))
-
-        Linf_rel = η0_scale > 0 ? Linf_abs / η0_scale : Linf_abs
-
-        println("wet cells used: ", nwet)
-        println("steady-state L∞ absolute error on wet cells: ", Linf_abs)
-        println("steady-state L∞ relative error on wet cells: ", Linf_rel)
-    else
-        println("No wet cells found for steady-state error evaluation.")
-        Linf_abs = NaN
-        Linf_rel = NaN
+    # Include initially dry and shallow cells in the equilibrium diagnostic.
+    Linf_abs = maximum(abs.(h[2:end-1, 2:end-1] .- h_initial[2:end-1, 2:end-1]))
+    if !perf_test
+        println("steady-state L∞ depth error (all interior cells): ", Linf_abs)
+        println("maximum momentum: ", max(maximum(abs.(hu)), maximum(abs.(hv))))
     end
     # print time
     println("Total simulation time: $(round(time, digits=2)) seconds")
@@ -1580,14 +1560,21 @@ Run the 2D well-balanced SWE solver over topography and optionally output frames
     if do_viz
         println("\nSaved $(frame_id[]) frames to: $(abspath(outdir))")
     end
+    if return_state
+        return (h=Array(h)[2:end-1, 2:end-1], hu=Array(hu)[2:end-1, 2:end-1],
+                hv=Array(hv)[2:end-1, 2:end-1], z=Array(z)[2:end-1, 2:end-1],
+                time=time, depth_error=Linf_abs)
+    end
     return Linf_abs
 end
 
-swe2d_topography_frames(;
-    outdir = "docs/frames/frames_topography",
-    do_viz = true,
-    force_array_output = true
-)
+if abspath(PROGRAM_FILE) == @__FILE__
+    swe2d_topography_frames(;
+        outdir = "docs/frames/frames_topography",
+        do_viz = true,
+        force_array_output = true
+    )
+end
 
 
 

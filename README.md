@@ -15,7 +15,7 @@ The main goal of this project is the development of **parallel 2D shallow-water 
 - CPU and reference implementations for verification,
 - visualization and post-processing scripts for generated simulation output.
 
-The numerical focus is a first-order finite-volume SWE solver with Rusanov fluxes following [1], bottom topography, and a free-surface-based well-balanced wet/dry treatment adapted from [3]. The solver further includes wet/dry stabilization and an absorbing sponge layer. Visualization and post-processing are based on ideas from [2]. The software focus follows a similar workflow as the PorousConvection project from the first part of this course: start from a serial/reference formulation, port the solver to a single CPU/GPU backend with `ParallelStencil.jl`, and then extend it to distributed multi-XPU simulations with `ImplicitGlobalGrid.jl`.
+The numerical focus is a first-order finite-volume SWE solver with Rusanov fluxes following [1], bottom topography, and a well-balanced wet/dry hydrostatic reconstruction [5], using the pressure/source balance principles discussed in [3]. The solver further includes wet/dry stabilization and an absorbing sponge layer. Visualization and post-processing are based on ideas from [2]. The software focus follows a similar workflow as the PorousConvection project from the first part of this course: start from a serial/reference formulation, port the solver to a single CPU/GPU backend with `ParallelStencil.jl`, and then extend it to distributed multi-XPU simulations with `ImplicitGlobalGrid.jl`.
 
 The final solver are `src/xpu/2d_swe_xpu_wb.jl` and `src/xpu/2d_swe_multi_xpu_wb.jl`. For those extensive documentation is provided.
 
@@ -259,138 +259,57 @@ $$
 
 The multi-XPU solver computes local speed extrema and uses MPI reductions to obtain globally consistent timestep information.
 
-### Well-balanced free-surface reconstruction
+### Well-balanced wet/dry reconstruction
 
-A standard topographic finite-volume discretisation is not automatically well-balanced.  
-If the mass flux diffuses $h_R-h_L$, then even a lake at rest may generate artificial transport because
-
-$$
-h_R-h_L \neq 0
-$$
-
-over non-flat bathymetry, even when
+The final solvers use first-order **hydrostatic reconstruction**. At each x-face,
 
 $$
-\eta_R-\eta_L = 0.
+z^*_{i+1/2,j}=\max(z_{i,j},z_{i+1,j}),\qquad
+h_L^*=\max(0,h_{i,j}+z_{i,j}-z^*),\qquad
+h_R^*=\max(0,h_{i+1,j}+z_{i+1,j}-z^*).
 $$
 
-The well-balanced implementation therefore reconstructs the free surface
+The y-faces are treated independently using the adjacent y-bed elevations. A cell
+can therefore have wet faces in one direction and blocked faces in the other.
+Reconstructed momenta are $h^*u$ and $h^*v$, using regularized cell velocities.
+The mass flux diffuses the **reconstructed depth jump**:
 
 $$
-\eta=h+z
+F_1=\tfrac12(h_L^*u_L+h_R^*u_R)-\tfrac12 a(h_R^*-h_L^*).
 $$
 
-and evaluates interface water depths against a face bathymetry.
+For a lake at rest, both reconstructed depths agree at every face, including a
+wet/dry interface where both can vanish. Consequently, the mass flux is zero.
+Using the uncorrected cell-centred surface jump after clipping face depths would
+break this property.
 
-At the $x$-interface $i+1/2,j$,
+### Pressure and bed-source balance
 
-$$
-z_{i+1/2,j} =
-\frac{z_{i,j}+z_{i+1,j}}{2},
-$$
-
-$$
-\eta_L=h_{i,j}+z_{i,j},
-\qquad
-\eta_R=h_{i+1,j}+z_{i+1,j},
-$$
+The normal momentum flux is split into transport and hydrostatic pressure:
 
 $$
-h_L =
-\max\left(0,\eta_L-z_{i+1/2,j}\right),
+P_x=\tfrac14g\big((h_L^*)^2+(h_R^*)^2\big).
 $$
 
-$$
-h_R =
-\max\left(0,\eta_R-z_{i+1/2,j}\right).
-$$
-
-The same construction is used at $y$-interfaces.
-
-### Well-balanced mass flux
-
-The core first-order replacement is
+For each cell, the pressure update uses the residuals
 
 $$
-\boxed{
-F_{1,i+1/2,j} =
-\frac{1}{2}\left[(hu)_L+(hu)_R\right] -
-\frac{1}{2}a_{i+1/2,j}(\eta_R-\eta_L)
-}
+-\frac{\Delta t}{\Delta x}
+\left[(P_E-\tfrac12g(h_E^*)^2)-(P_W-\tfrac12g(h_W^*)^2)\right],
 $$
 
-instead of diffusing $h_R-h_L$.  
-Similarly,
+and the analogous y-expression. These cell-side corrections discretize the bed
+source consistently with the reconstructed pressure. Every residual vanishes at
+rest, even when a face is dry. Transport uses the donor's draining timestep;
+pressure and its bed correction use the global timestep.
 
-$$
-\boxed{
-G_{1,i,j+1/2} =
-\frac{1}{2}\left[(hv)_L+(hv)_R\right] -
-\frac{1}{2}b_{i,j+1/2}(\eta_R-\eta_L)
-}.
-$$
-
-At lake at rest,
-
-$$
-\eta_R-\eta_L=0,
-$$
-
-so no artificial mass flux is generated.
-
-### Well-balanced source term
-
-For cell $(i,j)$ define
-
-$$
-z_E = \frac{z_{i,j}+z_{i+1,j}}{2},
-\qquad
-z_W = \frac{z_{i-1,j}+z_{i,j}}{2},
-$$
-
-$$
-z_N = \frac{z_{i,j}+z_{i,j+1}}{2},
-\qquad
-z_S = \frac{z_{i,j-1}+z_{i,j}}{2}.
-$$
-
-Let
-
-$$
-\eta_C=h_{i,j}+z_{i,j}.
-$$
-
-Then the face depths used by the source term are
-
-$$
-h_E=\max(0,\eta_C-z_E),
-\qquad
-h_W=\max(0,\eta_C-z_W),
-$$
-
-$$
-h_N=\max(0,\eta_C-z_N),
-\qquad
-h_S=\max(0,\eta_C-z_S).
-$$
-
-The source terms are discretised as
-
-$$
-S^{(2)}_{i,j} =
--g\,
-\frac{h_E+h_W}{2}
-\frac{z_E-z_W}{\Delta x},
-$$
-
-$$
-S^{(3)}_{i,j} =
--g\,
-\frac{h_N+h_S}{2}
-\frac{z_N-z_S}{\Delta y}.
-$$
-
-In the fully wet lake-at-rest case, this discrete source treatment cancels the hydrostatic pressure imbalance.
+This follows the supplied paper's requirements of non-negative face states,
+direction-dependent wet/dry treatment, and matched pressure/source balance [3].
+The concrete reconstruction is the first-order hydrostatic method [5], suitable
+for the existing Rusanov/Euler solver. It does **not** implement the paper's
+second-order minmod reconstruction, subcell wet lengths, or directional draining
+formula. A port of that full method requires changing the representation of
+bathymetry and partially flooded cell averages as well as the reconstruction.
 
 ### Wet/dry velocity stabilization
 
@@ -434,12 +353,12 @@ $$
 \min(\Delta x,\Delta y)^4.
 $$
 
-The scripts additionally apply dry-cell cleanup:
+The scripts additionally zero momentum below $h_\varepsilon=10^{-10}$, retaining positive water depth to conserve mass:
 
 $$
-h<h_\varepsilon
+0<h\le h_\varepsilon
 \quad\Longrightarrow\quad
-h=0,\qquad hu=0,\qquad hv=0.
+hu=0,\qquad hv=0,\qquad h\text{ is retained}.
 $$
 
 ### Draining timestep
@@ -470,20 +389,21 @@ $$
 
 Outgoing face fluxes use the draining timestep of the upwind donor cell.
 
-### Limitations of the current well-balanced wet/dry treatment
+### Verification
 
-For wet/dry fronts, however, the current implementation should be interpreted as a partial WB treatment rather than the full method from the paper. The code reconstructs the free surface and uses a draining timestep to prevent cells from losing more water than they contain, but it does not yet implement the full wet/dry reconstruction and correction procedure required for exact well-balancing near shorelines.
+Run the actual single-XPU and multi-XPU solvers on a small domain with:
 
-Our current method is therefore expected to be well-balanced for fully wet lake-at-rest configurations, but not necessarily for wet/dry lake-at-rest states. To obtain the full wet/dry WB property, the following extensions would be required:
+```bash
+julia --project test/test_wet_dry_wb.jl
+```
 
-1. Store or reconstruct bathymetry consistently at cell interfaces, rather than relying only on simple linear interpolation from cell centers.
-2. Add the wet/dry cell classification used in the paper: dry, fully flooded and partially flooded cells.
-3. Implement the reconstruction correction for partially flooded cells, where the reconstructed water surface is redistributed or clipped against the interface bathymetry.
-4. Use direction-dependent wet/dry information in two dimensions, since a cell may behave differently in the x- and y-directions when the bathymetry gradients differ.
-5. Couple the corrected reconstruction with the source discretization so that the hydrostatic momentum flux and bed-slope source term cancel also in partially flooded cells.
-6. Keep the draining timestep as a positivity-preserving stabilization, but do not treat it as sufficient by itself for full wet/dry well-balancing.
-
-Thus, the present implementation should be described as a simplified positivity-preserving and well-balanced scheme for the fully wet case, with partial wet/dry stabilization.
+The suite checks fully wet, island, oblique shoreline, discontinuous bed, rough
+shoreline, fully dry, and very shallow equilibria for 200 steps on a 34 × 30 grid
+(including ghost cells). It also checks dam-break wetting, a perturbed shoreline,
+positivity before cleanup under an active draining limiter, and mass conservation.
+Results are compared between one XPU and MPI layouts 1 × 1, 2 × 1, and 2 × 2.
+Checks include initially dry and shallow cells, rather than selecting only cells
+that remain wet. See `docs/wet_dry_verification.md` for numerical details.
 
 ### Absorbing sponge layer
 
@@ -536,9 +456,9 @@ The multi-XPU solver is essentially the XPU solver but it utilizes the ImplicitG
 
 It essentially splits up the full domain into similar sized subdomains and distributes them such that each GPU and or CPU receives one subdomain.
 
-Neighbour exchanges are handled via update_halo from ImplicitGlobalGrid. We use the @hide_communication pattern for both halo updates however the first halo exchange is most likely still producing communication overhead as the kernel is too small to hide all communication. 
+Neighbour exchanges use `update_halo!` from ImplicitGlobalGrid. The draining-limit exchange retains `@hide_communication`. State halos are exchanged after dry-cell cleanup and physical boundary updates, so neighbouring ranks see the final state of each step. The default topology is 2 × 2; the `mpi_dims` keyword can select other layouts.
 
-The timestep requires a reduction which causes some communication overhead. To reduce this a conservative timestep is chosen every 10 timesteps and used for the next 10 timesteps. Should the timestep for any subdomain require to become larger than the 0.99*CLF condition a warning will be printed. This warning never showed up in any of our simulations. If this shows up the conservative timestep is still chosen too large and should be reduced slightly more.
+The timestep uses global speed reductions every step and CFL = 0.45 in both solvers. A fully dry domain exits without taking a non-finite timestep. Reusing a timestep for ten steps is unsafe when wet/dry fronts accelerate.
 
 ### Water Visualization
 
@@ -824,7 +744,7 @@ After establishing these checks for the non-well-balanced schemes, we introduced
 *Initial condition and topography for the partially wet lake-at-rest benchmark, including wet and dry regions.*
 
 ![Dry_wet_error](docs/final_presentation_docs/error_convergence_topography.png)
-*Error evolution for the partially wet benchmark. The steady state is not preserved exactly, but the well-balanced scheme shows convergent error behavior.*
+*Historical error evolution before the wet/dry correction. The current reconstruction preserves the tested wet/dry equilibria to roundoff; run the verification suite above for current results.*
 
 
 
@@ -871,6 +791,12 @@ julia --project src/xpu/output_compression.jl
 ```
 
 ## Galery
+
+The [Cleuson dam-break example](docs/cleuson_dam_break.md) uses downloaded
+swisstopo terrain, a timed dam removal and a simple scientific depth map:
+[MP4](docs/animations/cleuson_dam_break.mp4). Its prepared inputs are in
+`data/cleuson/`; `plotting/plot_depth.py` renders the saved depth fields.
+
 ![gauss vs TOPO1](docs/animations/QualityVisualizations/NewTopo1_Gauss.gif)
 *Gauss wave vs [Topo1](data/tsunamiOku/D112-94-50m.txt)*
 
@@ -900,7 +826,6 @@ Natural extensions include:
 
 - stronger formal test coverage,
 - second-order reconstruction and slope limiting,
-- fully wet/dry treatment to complete WB also for partial wet simulations(as mentioned in the nummerical methods WB part),
 - systematic comparison of CPU, single-XPU, and multi-XPU results,
 - testing the solver on Swiss topography and bathimetry
 - enabling full memory usage when loading topographies on multi-XPU
@@ -911,3 +836,5 @@ Natural extensions include:
 2. D. Swientek, *Interactive Visualization of Shallow Water Equation Solvers*, Bachelor’s thesis, Friedrich-Alexander-Universität Erlangen-Nürnberg, 2018.
 3. S. Hwang, P. J. Lynett, and S. Son, “A second-order well-balanced reconstruction for the shallow flows with wet/dry fronts,” *Computers and Mathematics with Applications*, vol. 208, pp. 33–54, 2026. doi: 10.1016/j.camwa.2026.01.036.
 4. Generative AI was used for plotting scripts, debugging and Documentation espacially README.md formatting and modifications.
+
+5. E. Audusse, F. Bouchut, M.-O. Bristeau, R. Klein, and B. Perthame, “A fast and stable well-balanced scheme with hydrostatic reconstruction for shallow water flows,” *SIAM Journal on Scientific Computing*, 25(6), 2050–2065, 2004. [doi:10.1137/S1064827503431090](https://doi.org/10.1137/S1064827503431090).
