@@ -25,6 +25,8 @@ CACHE = ROOT / "cache/swiss_dam"
 BOUNDS = (2589000, 1105000, 2592500, 1112500)
 DX = 25.0
 LEVEL = 2186.0  # FOEN lake inventory, LN02 elevation.
+END_TIME = 600.0
+SNAPSHOT_INTERVAL = 1.5
 STAC = "https://data.geo.admin.ch/api/stac/v1/collections/ch.swisstopo.swissalti3d/items"
 LAKE_URL = ("https://api3.geo.admin.ch/rest/services/ech/MapServer/identify?"
             "geometryType=esriGeometryPoint&geometry=2591104,1106271&sr=2056&"
@@ -94,7 +96,8 @@ def download_terrain():
     terrain.tofile(CASE / "terrain.bin")
     lake_path = CASE / "lake.geojson"
     if not lake_path.exists():
-        lake = get(LAKE_URL).json()["results"][0]
+        reference = ROOT / "data/cleuson/lake.geojson"
+        lake = json.loads(reference.read_text()) if reference.exists() else get(LAKE_URL).json()["results"][0]
         lake_path.write_text(json.dumps(lake, indent=2))
     lake = json.loads(lake_path.read_text())
     sources = {"terrain": "https://www.swisstopo.admin.ch/en/height-model-swissalti3d",
@@ -157,8 +160,8 @@ gravity = 9.81
 manning = 0.025
 velocity_depth_scale = 0.001
 breach_time = 30.0
-end_time = 600.0
-snapshot_interval = 1.5
+end_time = {END_TIME}
+snapshot_interval = {SNAPSHOT_INTERVAL}
 cfl = 0.45
 bed_description = "idealized lake bed"
 terrain_attribution = "terrain © swisstopo"
@@ -199,8 +202,23 @@ def plot_setup(terrain, before, h, dam):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dx", type=float, default=DX, help="Cell width in metres")
+    parser.add_argument("--output", type=Path, default=CASE, help="Prepared case directory")
+    parser.add_argument("--end-time", type=float, default=END_TIME, help="Simulation duration in seconds")
+    parser.add_argument("--snapshot-interval", type=float, default=SNAPSHOT_INTERVAL, help="Seconds between depth snapshots")
     parser.add_argument("--terrain-only", action="store_true")
     args = parser.parse_args()
+    if args.dx <= 0 or not np.isfinite(args.dx):
+        parser.error("--dx must be positive and finite")
+    if not np.isfinite(args.end_time) or args.end_time <= 30:
+        parser.error("--end-time must be greater than the 30 s breach time")
+    if not np.isfinite(args.snapshot_interval) or args.snapshot_interval <= 0:
+        parser.error("--snapshot-interval must be positive and finite")
+    for length in (BOUNDS[2] - BOUNDS[0], BOUNDS[3] - BOUNDS[1]):
+        if not np.isclose(length / args.dx, round(length / args.dx)):
+            parser.error("--dx must divide both domain lengths")
+    DX, CASE = args.dx, args.output
+    END_TIME, SNAPSHOT_INTERVAL = args.end_time, args.snapshot_interval
     terrain, lake = download_terrain()
     if args.terrain_only:
         plot_setup(terrain, terrain, lake.astype(float), np.zeros_like(lake))

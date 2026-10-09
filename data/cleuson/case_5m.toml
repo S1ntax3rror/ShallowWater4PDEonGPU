@@ -1,0 +1,29 @@
+name = "Cleuson dam break"
+nx = 700
+ny = 1500
+dx = 5.0
+dy = 5.0
+x_min = 2589000
+y_min = 1105000
+water_level = 2186.0
+gravity = 9.81
+manning = 0.025
+velocity_depth_scale = 0.001
+breach_time = 30.0
+end_time = 200.0
+snapshot_interval = 0.5
+cfl = 0.45
+bed_description = "idealized lake bed"
+terrain_attribution = "terrain © swisstopo"
+
+[[locations]]
+name = "Cleuson dam"
+easting = 2590980.0
+northing = 1106790.0
+label_easting = 2591550.0
+label_northing = 1107100.0
+
+[[locations]]
+name = "Siviez"
+easting = 2590724.0
+northing = 1109231.0

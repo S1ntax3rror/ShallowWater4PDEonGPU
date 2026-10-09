@@ -13,7 +13,8 @@ using TOML
     return nothing
 end
 
-function run_case(case_dir, output_dir)
+function run_case(case_dir, output_dir; benchmark_steps=0)
+    benchmark_steps >= 0 || error("benchmark_steps must be nonnegative")
     cfg = TOML.parsefile(joinpath(case_dir, "case.toml"))
     nx, ny = cfg["nx"], cfg["ny"]
     dx, dy = cfg["dx"], cfg["dy"]
@@ -47,11 +48,13 @@ function run_case(case_dir, output_dir)
     steady_momentum = 0.0
     time, step, frame = 0.0, 0, 0
     breached = false
-    next_snapshot = interval
+    next_snapshot = benchmark_steps > 0 ? Inf : interval
+    warmup_steps = 5
+    step_times = Float64[]
     maximum_depth = copy(h)
     arrival_time = fill(-1.0, nx, ny)
     mkpath(output_dir)
-    log = open(joinpath(output_dir, "diagnostics.csv"), "w")
+    log = benchmark_steps > 0 ? IOBuffer() : open(joinpath(output_dir, "diagnostics.csv"), "w")
     println(log, "frame,time_s,volume_m3,reservoir_volume_m3,outflow_m3,balance_error_m3,max_depth_m,max_speed_m_s,min_raw_depth_m")
     function snapshot!()
         all(isfinite, h) && all(isfinite, hu) && all(isfinite, hv) || error("Nonfinite state at t=$time")
@@ -66,10 +69,13 @@ function run_case(case_dir, output_dir)
         flush(log)
         frame += 1
     end
-    snapshot!()
+    if benchmark_steps == 0
+        snapshot!()
+    end
     wall_start = Base.time()
     while time < end_time - 1e-9
         step += 1
+        step_start = Base.time()
         step <= 200000 || error("Step limit exceeded at t=$time")
         @parallel compute_maxspeed!(sx, sy, h, hu, hv, z, gravity, vel_eps)
         rate = maximum(sx) / dx + maximum(sy) / dy
@@ -99,7 +105,7 @@ function run_case(case_dir, output_dir)
         newly_wet = (arrival_time .< 0) .& (h .> 0.05) .& .!reservoir
         arrival_time[newly_wet] .= time
         max_balance_error = max(max_balance_error, abs(volume() + outflow - initial_volume))
-        if !breached && time >= breach_time - 1e-9
+        if !breached && (time >= breach_time - 1e-9 || (benchmark_steps > 0 && step == warmup_steps))
             steady_depth_error = maximum(abs.(h .- initial_h))
             steady_momentum = max(maximum(abs.(hu)), maximum(abs.(hv)))
             steady_depth_error < 1e-8 && steady_momentum < 1e-7 || error("Initial reservoir is not at rest")
@@ -107,7 +113,7 @@ function run_case(case_dir, output_dir)
             z .= z_after
             volume() == mass_before || error("Dam removal changed the water volume")
             breached = true
-            @printf("Dam removed at %.1f s; steady depth error %.3e m, momentum %.3e m²/s\n",
+            @printf("Dam removed at %.3f s; steady depth error %.3e m, momentum %.3e m²/s\n",
                     time, steady_depth_error, steady_momentum)
         end
         if time >= next_snapshot - 1e-9
@@ -120,8 +126,35 @@ function run_case(case_dir, output_dir)
                 flush(stdout)
             end
         end
+        if benchmark_steps > 0 && step > warmup_steps
+            push!(step_times, Base.time() - step_start)
+            if length(step_times) % 10 == 0
+                @printf("Benchmark %d/%d steps; mean %.3f s/step\n",
+                        length(step_times), benchmark_steps, sum(step_times) / length(step_times))
+                flush(stdout)
+            end
+            length(step_times) == benchmark_steps && break
+        end
     end
     close(log)
+    if benchmark_steps > 0
+        all(isfinite, h) && all(isfinite, hu) && all(isfinite, hv) || error("Nonfinite benchmark state")
+        relative_balance = max_balance_error / initial_volume
+        relative_balance < 1e-8 || error("Benchmark mass balance error $relative_balance")
+        report = Dict("nx" => nx, "ny" => ny, "dx_m" => dx, "threads" => Threads.nthreads(),
+                      "measured_steps" => length(step_times), "warmup_steps" => warmup_steps,
+                      "mean_seconds_per_step" => sum(step_times) / length(step_times),
+                      "min_seconds_per_step" => minimum(step_times),
+                      "max_seconds_per_step" => maximum(step_times),
+                      "step_seconds" => step_times, "minimum_raw_depth_m" => min_raw_depth,
+                      "relative_mass_balance_error" => relative_balance,
+                      "steady_depth_error_m" => steady_depth_error,
+                      "steady_momentum_m2_s" => steady_momentum)
+        open(joinpath(output_dir, "benchmark.toml"), "w") do io
+            TOML.print(io, report)
+        end
+        return report
+    end
     write(joinpath(output_dir, "maximum_depth.bin"), Float32.(maximum_depth))
     write(joinpath(output_dir, "arrival_time.bin"), Float32.(arrival_time))
     relative_balance = max_balance_error / initial_volume
@@ -145,6 +178,19 @@ function run_case(case_dir, output_dir)
     @printf("Finished %d steps, %d frames; relative mass error %.3e\n", step, frame, relative_balance)
 end
 
-root = normpath(joinpath(@__DIR__, "../.."))
-run_case(length(ARGS) >= 1 ? ARGS[1] : joinpath(root, "data/cleuson"),
-         length(ARGS) >= 2 ? ARGS[2] : joinpath(root, "cache/swiss_dam/frames"))
+if abspath(PROGRAM_FILE) == @__FILE__
+    root = normpath(joinpath(@__DIR__, "../.."))
+    args = copy(ARGS)
+    benchmark_steps = 0
+    flag = findfirst(==("--benchmark-steps"), args)
+    if flag !== nothing
+        flag < length(args) || error("--benchmark-steps requires a positive integer")
+        benchmark_steps = parse(Int, args[flag + 1])
+        benchmark_steps > 0 || error("--benchmark-steps requires a positive integer")
+        deleteat!(args, flag:flag+1)
+    end
+    length(args) <= 2 || error("Usage: run.jl [case_dir] [output_dir] [--benchmark-steps N]")
+    run_case(length(args) >= 1 ? args[1] : joinpath(root, "data/cleuson"),
+             length(args) >= 2 ? args[2] : joinpath(root, "cache/swiss_dam/frames");
+             benchmark_steps=benchmark_steps)
+end

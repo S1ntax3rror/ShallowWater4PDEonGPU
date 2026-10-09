@@ -796,6 +796,10 @@ The [Cleuson dam-break example](docs/cleuson_dam_break.md) uses downloaded
 swisstopo terrain, a timed dam removal and a simple scientific depth map:
 [MP4](docs/animations/cleuson_dam_break.mp4). Its prepared inputs are in
 `data/cleuson/`; `plotting/plot_depth.py` renders the saved depth fields.
+The 5 m run has an [oblique animation](docs/animations/cleuson_dam_break_5m_3d.mp4)
+and a [top-down animation](docs/animations/cleuson_dam_break_5m_2d.mp4), both
+showing 200 simulated seconds. `examples/cleuson/run_5m.sh` reproduces the run
+and both views.
 
 ![gauss vs TOPO1](docs/animations/QualityVisualizations/NewTopo1_Gauss.gif)
 *Gauss wave vs [Topo1](data/tsunamiOku/D112-94-50m.txt)*
