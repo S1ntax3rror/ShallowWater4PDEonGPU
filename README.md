@@ -800,6 +800,11 @@ The 5 m run has an [oblique animation](docs/animations/cleuson_dam_break_5m_3d.m
 and a [top-down animation](docs/animations/cleuson_dam_break_5m_2d.mp4), both
 showing 200 simulated seconds. `examples/cleuson/run_5m.sh` reproduces the run
 and both views.
+The reservoir and dam also have [top-down](docs/animations/cleuson_dam_zoom_2d.mp4)
+and [3D](docs/animations/cleuson_dam_zoom_3d.mp4) close-ups.
+An [animated longitudinal section](docs/animations/cleuson_longitudinal_section.mp4)
+and [profile comparison](docs/animations/cleuson_longitudinal_section.png) show
+the bed and changing free-surface elevation through the reservoir and dam.
 
 ![gauss vs TOPO1](docs/animations/QualityVisualizations/NewTopo1_Gauss.gif)
 *Gauss wave vs [Topo1](data/tsunamiOku/D112-94-50m.txt)*

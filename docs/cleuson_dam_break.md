@@ -192,3 +192,59 @@ drawing. The complete file was decoded successfully with FFmpeg, and initial,
 The top-down MP4 is **1080 × 1200**, H.264, 20 fps and 22.05 s long, with the
 same start/end holds. Its complete file was decoded successfully with FFmpeg;
 initial, 150 s and 200 s preview frames are saved next to it.
+
+## Reservoir and dam close-up
+
+Both plotters accept `--bounds E_MIN N_MIN E_MAX N_MAX` in the projected case
+coordinates. This crops the saved fields for display; the simulation still uses
+the full valley domain. The Cleuson close-up covers 2 × 2.5 km and retains the
+entire initial reservoir:
+
+```sh
+cache/swiss_dam_venv/bin/python plotting/plot_depth.py \
+  --case cache/swiss_dam/cleuson_5m --frames cache/swiss_dam/frames_5m \
+  --bounds 2590000 1105200 2592000 1107700 \
+  --output docs/animations/cleuson_dam_zoom_2d.mp4
+cache/swiss_dam_venv/bin/python plotting/plot_depth_3d.py \
+  --case cache/swiss_dam/cleuson_5m --frames cache/swiss_dam/frames_5m \
+  --bounds 2590000 1105200 2592000 1107700 \
+  --water-spacing 5 --terrain-spacing 25 --elevation 55 --azimuth 135 \
+  --output docs/animations/cleuson_dam_zoom_3d.mp4
+```
+
+The 3D camera looks from the downstream side towards the reservoir, with 5 m
+water/near-water polygons and 25 m terrain polygons elsewhere. Movies:
+[top-down close-up](animations/cleuson_dam_zoom_2d.mp4) and
+[3D close-up](animations/cleuson_dam_zoom_3d.mp4).
+Use `--preview-time SECONDS` with either plotter to save a single PNG instead.
+
+## Longitudinal free-surface section
+
+[`plotting/plot_longitudinal_section.py`](../plotting/plot_longitudinal_section.py)
+samples the existing 5 m results along a fixed curved section through the lake,
+dam and nearby outlet. Its editable LV95 vertices are saved in
+[`data/cleuson/section_path.csv`](../data/cleuson/section_path.csv).
+The map beside the profile identifies the section and animates the water depth
+at the same snapshot time as both section panels. Its depth colour scale is
+fixed at 0–80 m. The static comparison shows the initial lake on the map.
+Horizontal distance is arc
+length along that path, with zero at the centre of its dam-footprint crossing;
+negative distances lie upstream.
+
+```sh
+cache/swiss_dam_venv/bin/python plotting/plot_longitudinal_section.py
+```
+
+The script saves an [MP4](animations/cleuson_longitudinal_section.mp4) and
+profiles at 0, 35, 45, 60, 100 and 200 s as a
+[PNG](animations/cleuson_longitudinal_section.png) and
+[PDF](animations/cleuson_longitudinal_section.pdf). A second panel shows the
+region within 200 m of the dam. The grey area is the bed, the coloured curves
+are the free-surface elevation `η = z + h`, and the dashed red line retains the
+intact dam as a reference. The animation uses the initial bed until removal at
+30 s and the excavated foundation afterwards. Water surfaces are interpolated
+from wet cells only; dry ground is not drawn as a water surface.
+
+Use `--path` for another polyline and `--times` to select the comparison times.
+This is a section extracted from the 2D simulation, rather than a separate 1D
+simulation or a cross-section average. `run_5m.sh` also renders it.

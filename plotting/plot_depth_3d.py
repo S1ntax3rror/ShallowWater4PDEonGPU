@@ -15,6 +15,7 @@ from matplotlib.colors import LightSource, PowerNorm
 from matplotlib.collections import PolyCollection
 import numpy as np
 from scipy.ndimage import binary_dilation
+from plot_depth import crop_grid
 
 
 class ProjectedSurface(PolyCollection):
@@ -84,13 +85,15 @@ def water_mesh(depth, bed, cfg, spacing, cmap, norm):
 
 
 def render(case_dir, frames_dir, output, fps=20, terrain_spacing=50,
-           water_spacing=10, elevation=45, azimuth=-25, exaggeration=1.5, preview_time=None):
+           water_spacing=10, elevation=45, azimuth=-25, exaggeration=1.5, preview_time=None,
+           bounds=None):
     cfg = tomllib.loads((case_dir / "case.toml").read_text())
     shape = (cfg["ny"], cfg["nx"])
-    before = np.fromfile(case_dir / "bed_before.bin", dtype="<f8").reshape(shape)
-    after = np.fromfile(case_dir / "bed_after.bin", dtype="<f8").reshape(shape)
+    cfg, window = crop_grid(cfg, bounds)
+    before = np.fromfile(case_dir / "bed_before.bin", dtype="<f8").reshape(shape)[window]
+    after = np.fromfile(case_dir / "bed_after.bin", dtype="<f8").reshape(shape)[window]
     maximum_depth = frames_dir / "maximum_depth.bin"
-    wet_region = (np.fromfile(maximum_depth, dtype="<f4").reshape(shape) > .05
+    wet_region = (np.fromfile(maximum_depth, dtype="<f4").reshape(shape)[window] > .05
                   if maximum_depth.exists() else before < cfg["water_level"])
     mesh_before = terrain_mesh(before, cfg, terrain_spacing, water_spacing, wet_region)
     mesh_after = terrain_mesh(after, cfg, terrain_spacing, water_spacing, wet_region)
@@ -141,7 +144,7 @@ def render(case_dir, frames_dir, output, fps=20, terrain_spacing=50,
         bed = after if removed else before
         terrain_colours = (mesh_after if removed else mesh_before)[1]
         terrain_projection = projected_after if removed else projected_before
-        depth = np.fromfile(frames_dir / f"depth_{int(row['frame']):05d}.bin", dtype="<f4").reshape(shape)
+        depth = np.fromfile(frames_dir / f"depth_{int(row['frame']):05d}.bin", dtype="<f4").reshape(shape)[window]
         water_vertices, water_colours = water_mesh(depth, bed, cfg, water_spacing, cmap, norm)
         # Cache the fixed terrain projection and sort all faces with vectorized operations.
         projected = np.concatenate((terrain_projection, project(water_vertices, projection)))
@@ -197,6 +200,9 @@ if __name__ == "__main__":
     parser.add_argument("--azimuth", type=float, default=-25)
     parser.add_argument("--exaggeration", type=float, default=1.5)
     parser.add_argument("--preview-time", type=float)
+    parser.add_argument("--bounds", type=float, nargs=4, metavar=("E_MIN", "N_MIN", "E_MAX", "N_MAX"),
+                        help="Crop to projected case coordinates in metres")
     args = parser.parse_args()
     render(args.case, args.frames, args.output, args.fps, args.terrain_spacing,
-           args.water_spacing, args.elevation, args.azimuth, args.exaggeration, args.preview_time)
+           args.water_spacing, args.elevation, args.azimuth, args.exaggeration, args.preview_time,
+           args.bounds)

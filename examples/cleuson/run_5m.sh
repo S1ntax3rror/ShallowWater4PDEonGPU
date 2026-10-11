@@ -17,3 +17,6 @@ cp cache/swiss_dam/frames_5m/diagnostics.csv data/cleuson/diagnostics_5m.csv
 "$task_python" plotting/plot_depth.py \
     --case cache/swiss_dam/cleuson_5m --frames cache/swiss_dam/frames_5m \
     --output docs/animations/cleuson_dam_break_5m_2d.mp4
+"$task_python" plotting/plot_longitudinal_section.py \
+    --case cache/swiss_dam/cleuson_5m --frames cache/swiss_dam/frames_5m \
+    --output docs/animations/cleuson_longitudinal_section.mp4
